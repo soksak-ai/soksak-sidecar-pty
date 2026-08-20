@@ -187,17 +187,17 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 
 	// Shutdown reaps. A shell still running after the daemon has gone is the failure this whole
 	// process exists to make visible, and a pid that answers signal 0 is still there.
+	// Wait is the event. The daemon reaps its sessions before it returns, so by the time its own
+	// process has been waited for, a shell that is still there is one it failed to end — no clock is
+	// involved and no moment has to be guessed.
 	shellPID := session.ShellPID
 	_ = daemon.Process.Signal(os.Interrupt)
-	_, _ = daemon.Process.Wait()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if err := syscallKill(shellPID); err != nil {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
+	if _, err := daemon.Process.Wait(); err != nil {
+		t.Fatalf("waiting for the daemon to end: %v", err)
 	}
-	t.Fatalf("shell %d is still running after the daemon ended", shellPID)
+	if err := syscallKill(shellPID); err == nil {
+		t.Fatalf("shell %d is still running after the daemon ended", shellPID)
+	}
 }
 
 func next(t *testing.T, reader *bufio.Reader) controlwire.Response {

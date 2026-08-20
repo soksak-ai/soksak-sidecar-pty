@@ -1,20 +1,47 @@
 package main
 
 import (
+	"os"
 	"runtime"
 	"sort"
 	"strings"
 )
 
-// The environment a session runs in is the caller's, with this daemon's own removed.
+// The environment a session runs in is the caller's, and this daemon's own when the caller sends
+// none.
 //
-// Nothing here reads os.Environ. This process outlives whatever launched it, so its own environment
-// is a snapshot of one moment that has no claim on a session started an hour later — and a session
-// that inherited it would differ from an identical one started by a different launcher.
+// Reading os.Environ here is reading what was handed over, not deriving something: this process is
+// started with an environment its starter chose, and a caller that is a document in a web view has
+// no environment of its own to send. A daemon that refused instead would leave every session with
+// no PATH, which fails as a shell that cannot find anything rather than as a missing argument.
 //
-// What the caller sends is the whole environment, plus the names it wants dropped. The defaults
-// below are the terminal facts a tty needs and are applied only where the caller named nothing.
+// A caller that does send one replaces it whole rather than adding to it. Merging would make the
+// result depend on what happened to be in this process, which is the thing an explicit environment
+// exists to pin down.
+//
+// The defaults below are the terminal facts a tty needs, applied only where nothing named them.
 func sessionEnvironment(entries [][2]string, drop []string) []string {
+	if len(entries) == 0 {
+		entries = inherited()
+	}
+	return applyEnvironment(entries, drop)
+}
+
+// inherited is this process's environment as pairs.
+func inherited() [][2]string {
+	own := os.Environ()
+	entries := make([][2]string, 0, len(own))
+	for _, entry := range own {
+		name, value, found := strings.Cut(entry, "=")
+		if !found {
+			continue
+		}
+		entries = append(entries, [2]string{name, value})
+	}
+	return entries
+}
+
+func applyEnvironment(entries [][2]string, drop []string) []string {
 	caseInsensitive := runtime.GOOS == "windows"
 	normalize := func(name string) string {
 		if caseInsensitive {

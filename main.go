@@ -109,11 +109,29 @@ func accept(listener net.Listener, serve func(net.Conn)) {
 	}
 }
 
-// listen binds a unix socket, removing a path a dead daemon left behind.
+// listen binds a unix socket, refusing an address another daemon is on and clearing one a dead daemon left.
 //
-// The removal is why a socket file is not a readiness signal: the path exists both when someone is
-// listening and when nobody is, and this function is the case where nobody was.
+// This is why a socket file is not a readiness signal either: the path exists in both cases, and
+// telling them apart takes a connect.
 func listen(path string) (net.Listener, error) {
+	// Whether anyone is there is asked before the path is cleared.
+	//
+	// Removing first and binding second takes the address away from a daemon that is still serving:
+	// it keeps its listening socket, nothing can reach it any more, and the shells it holds become
+	// unreachable while a second daemon answers where they used to be. Both run and only one is
+	// findable.
+	//
+	// A connect is what separates the two cases. A path exists both when someone is listening and
+	// when a dead daemon left it behind, so a stat cannot tell them apart and this can.
+	if conn, err := net.Dial("unix", path); err == nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf(
+			"another daemon is already listening at %s\n"+
+				"It holds this home's shells. Reach that one rather than starting a second: two "+
+				"daemons on one home means the sessions of whichever loses the address are lost to "+
+				"everything that could have found them",
+			path)
+	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("clearing %s: %w", path, err)
 	}
