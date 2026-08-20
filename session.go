@@ -50,7 +50,7 @@ func newRegistry(shell string) *registry {
 // The shell, the environment and the working directory all arrive from the caller. Reading them
 // here would tie a session to whatever launched this daemon, and this process outlives the one that
 // launched it — that is the reason it is a process at all.
-func (reg *registry) open(request ptycontract.CreateOrAttachRequest) (*session, error) {
+func (reg *registry) open(request ptycontract.Open) (*session, error) {
 	if request.Cols == 0 || request.Rows == 0 {
 		return nil, fmt.Errorf("a session needs a size: cols=%d rows=%d", request.Cols, request.Rows)
 	}
@@ -64,8 +64,8 @@ func (reg *registry) open(request ptycontract.CreateOrAttachRequest) (*session, 
 
 	command := exec.Command(shell, "-l")
 	command.Env = sessionEnvironment(request.Environment, request.EnvironmentDrop)
-	if request.CWD != nil && *request.CWD != "" {
-		command.Dir = *request.CWD
+	if request.CWD != "" {
+		command.Dir = request.CWD
 	}
 	master, err := pty.StartWithSize(command, &pty.Winsize{Cols: request.Cols, Rows: request.Rows})
 	if err != nil {
@@ -223,10 +223,10 @@ func (reg *registry) byPane(paneID string) (*session, bool) {
 	return nil, false
 }
 
-func (reg *registry) list() []ptycontract.SessionInfo {
+func (reg *registry) list() []ptycontract.Info {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
-	out := make([]ptycontract.SessionInfo, 0, len(reg.sessions))
+	out := make([]ptycontract.Info, 0, len(reg.sessions))
 	for _, value := range reg.sessions {
 		label := value.windowLabel
 		var window *string
@@ -237,7 +237,7 @@ func (reg *registry) list() []ptycontract.SessionInfo {
 		if value.cmd != nil && value.cmd.Process != nil {
 			pid = uint32(value.cmd.Process.Pid)
 		}
-		out = append(out, ptycontract.SessionInfo{
+		out = append(out, ptycontract.Info{
 			Session:     value.id,
 			PaneID:      value.paneID,
 			ShellPID:    pid,

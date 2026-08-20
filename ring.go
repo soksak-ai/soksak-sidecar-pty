@@ -70,12 +70,6 @@ func (r *ring) wakeLocked() {
 	r.waiters = nil
 }
 
-// mode names how a request for a sequence was answered.
-const (
-	modeResumed   = "resumed"
-	modeRestarted = "restarted"
-)
-
 // resolve answers where a client asking for `from` will actually be served, and how.
 //
 // A nil `from` is a client with no history: it starts at the live edge rather than replaying
@@ -85,17 +79,17 @@ func (r *ring) resolve(from *uint64) (uint64, string) {
 	defer r.mu.Unlock()
 	live := r.floor + uint64(len(r.bytes))
 	if from == nil {
-		return live, modeResumed
+		return live, ptycontract.ModeResumed
 	}
 	switch {
 	case *from < r.floor:
-		return r.floor, modeRestarted
+		return r.floor, ptycontract.ModeRestarted
 	case *from > live:
 		// Ahead of anything written. Answering from the live edge would silently drop the
 		// difference; restarting states that what the client holds is not this session's.
-		return r.floor, modeRestarted
+		return r.floor, ptycontract.ModeRestarted
 	default:
-		return *from, modeResumed
+		return *from, ptycontract.ModeResumed
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	controlwire "github.com/soksak/soksak-contract-control"
 	ptycontract "github.com/soksak/soksak-contract-pty"
 )
 
@@ -60,15 +61,15 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the daemon wrote no announcement: %v", err)
 	}
-	var announced ptycontract.Announcement
+	var announced controlwire.Announcement
 	if err := json.Unmarshal(line, &announced); err != nil {
 		t.Fatalf("the first line is not an announcement: %q", line)
 	}
-	if announced.Version != ptycontract.ProtocolVersion {
-		t.Fatalf("the announcement names protocol %d, this build speaks %d", announced.Version, ptycontract.ProtocolVersion)
+	if announced.Protocol == nil || *announced.Protocol != controlwire.Protocol {
+		t.Fatalf("the announcement names protocol %v, this build speaks %d", announced.Protocol, controlwire.Protocol)
 	}
-	if announced.Socket != ptycontract.ControlSocketPath(home) {
-		t.Fatalf("the announcement names %q, the contract derives %q", announced.Socket, ptycontract.ControlSocketPath(home))
+	if announced.Socket == nil || *announced.Socket != ptycontract.ControlSocketPath(home) {
+		t.Fatalf("the announcement names %v, the contract derives %q", announced.Socket, ptycontract.ControlSocketPath(home))
 	}
 
 	token, err := os.ReadFile(ptycontract.TokenPath(home))
@@ -76,7 +77,7 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 		t.Fatalf("reading the token the daemon issued: %v", err)
 	}
 
-	control, err := net.Dial("unix", announced.Socket)
+	control, err := net.Dial("unix", *announced.Socket)
 	if err != nil {
 		t.Fatalf("connecting to the announced socket: %v", err)
 	}
@@ -84,30 +85,30 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 	send := json.NewEncoder(control)
 	read := bufio.NewReader(control)
 
-	if err := send.Encode(ptycontract.NewHello(string(token), "test")); err != nil {
+	if err := send.Encode(request("hello", controlwire.HelloCommand, map[string]any{
+		"protocol": controlwire.Protocol, "token": string(token),
+	})); err != nil {
 		t.Fatal(err)
 	}
-	if answer := next(t, read); !answer.OK {
-		t.Fatalf("the greeting was refused: %s %s", answer.Code, answer.Message)
+	if answer := next(t, read); !answer.Ok {
+		t.Fatalf("the greeting was refused: %s", answer.Error)
 	}
 
-	if err := send.Encode(ptycontract.CreateOrAttachRequest{
-		Op: "open", PaneID: "pane-1", Cols: 80, Rows: 24, Shell: shell,
-		Environment: [][2]string{{"PATH", os.Getenv("PATH")}},
-		WindowLabel: "w1",
-	}); err != nil {
+	if err := send.Encode(request("open", ptycontract.CommandOpen, map[string]any{
+		"request": ptycontract.Open{
+			PaneID: "pane-1", Cols: 80, Rows: 24, Shell: shell,
+			Environment: [][2]string{{"PATH", os.Getenv("PATH")}},
+			WindowLabel: "w1",
+		},
+	})); err != nil {
 		t.Fatal(err)
 	}
 	opened := next(t, read)
-	if !opened.OK {
-		t.Fatalf("opening a session was refused: %s %s", opened.Code, opened.Message)
+	if !opened.Ok {
+		t.Fatalf("opening a session was refused: %s", opened.Error)
 	}
-	var session struct {
-		Session  uint64 `json:"session"`
-		ShellPID int    `json:"shellPid"`
-		Created  bool   `json:"created"`
-	}
-	if err := opened.DecodeData(&session); err != nil {
+	var session ptycontract.Opened
+	if err := decodeAnswer(opened, &session); err != nil {
 		t.Fatal(err)
 	}
 	if session.ShellPID <= 0 {
@@ -121,34 +122,42 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 	}
 	defer func() { _ = stream.Close() }()
 	from := uint64(0)
-	hello := ptycontract.NewHello(string(token), "test-stream")
-	hello.Session = &session.Session
-	hello.FromSeq = &from
-	if err := json.NewEncoder(stream).Encode(hello); err != nil {
+	if err := json.NewEncoder(stream).Encode(request("attach", ptycontract.CommandAttach, map[string]any{
+		"request": ptycontract.Attach{Token: string(token), Session: session.Session, FromSeq: &from},
+	})); err != nil {
 		t.Fatal(err)
 	}
 	streamReader := bufio.NewReader(stream)
 	ackLine, err := streamReader.ReadBytes('\n')
 	if err != nil {
-		t.Fatalf("the stream socket answered no ack: %v", err)
+		t.Fatalf("the stream socket answered nothing: %v", err)
 	}
-	var ack ptycontract.StreamAck
-	if err := json.Unmarshal(ackLine, &ack); err != nil {
-		t.Fatalf("the stream ack is not one: %q", ackLine)
+	var ackResponse controlwire.Response
+	if err := json.Unmarshal(ackLine, &ackResponse); err != nil {
+		t.Fatalf("the stream answer is not a response: %q", ackLine)
 	}
-	if ack.Session != session.Session {
-		t.Fatalf("the stream ack names session %d, this stream is session %d", ack.Session, session.Session)
+	if !ackResponse.Ok {
+		t.Fatalf("attaching was refused: %s", ackResponse.Error)
+	}
+	var attached ptycontract.Attached
+	if err := decodeAnswer(ackResponse, &attached); err != nil {
+		t.Fatal(err)
+	}
+	if attached.Session != session.Session {
+		t.Fatalf("the stream answer names session %d, this stream is session %d", attached.Session, session.Session)
 	}
 
 	marker := "SOKSAK-PTY-ROUNDTRIP-OK"
-	if err := send.Encode(ptycontract.WriteRequest{
-		Op: "write", Session: session.Session,
-		DataBase64: base64.StdEncoding.EncodeToString([]byte("echo " + marker + "\n")),
-	}); err != nil {
+	if err := send.Encode(request("write", ptycontract.CommandWrite, map[string]any{
+		"request": ptycontract.Write{
+			Session:    session.Session,
+			DataBase64: base64.StdEncoding.EncodeToString([]byte("echo " + marker + "\n")),
+		},
+	})); err != nil {
 		t.Fatal(err)
 	}
-	if answer := next(t, read); !answer.OK {
-		t.Fatalf("writing to the session was refused: %s %s", answer.Code, answer.Message)
+	if answer := next(t, read); !answer.Ok {
+		t.Fatalf("writing to the session was refused: %s", answer.Error)
 	}
 
 	if err := stream.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
@@ -181,15 +190,45 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 	t.Fatalf("shell %d is still running after the daemon ended", shellPID)
 }
 
-func next(t *testing.T, reader *bufio.Reader) ptycontract.Reply {
+func next(t *testing.T, reader *bufio.Reader) controlwire.Response {
 	t.Helper()
 	line, err := reader.ReadBytes('\n')
 	if err != nil {
 		t.Fatalf("reading an answer: %v", err)
 	}
-	var answer ptycontract.Reply
+	var answer controlwire.Response
 	if err := json.Unmarshal(line, &answer); err != nil {
 		t.Fatalf("an answer is not an envelope: %q", line)
 	}
 	return answer
+}
+
+// request builds one envelope. Arguments are encoded here rather than by the caller so a shape
+// mismatch fails at this line rather than as a refusal the caller has to interpret.
+func request(id, command string, args map[string]any) controlwire.Request {
+	encoded := make(map[string]json.RawMessage, len(args))
+	for name, value := range args {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			panic(err)
+		}
+		encoded[name] = raw
+	}
+	return controlwire.Request{ID: id, Command: command, Args: encoded}
+}
+
+// decodeAnswer reads a result out of the answer shape a generic caller parses.
+func decodeAnswer(response controlwire.Response, target any) error {
+	raw, err := json.Marshal(response.Result)
+	if err != nil {
+		return err
+	}
+	var answer struct {
+		Code string          `json:"code"`
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &answer); err != nil {
+		return err
+	}
+	return json.Unmarshal(answer.Data, target)
 }

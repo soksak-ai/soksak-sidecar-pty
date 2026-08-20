@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	controlwire "github.com/soksak/soksak-contract-control"
 	ptycontract "github.com/soksak/soksak-contract-pty"
 )
 
@@ -57,7 +58,7 @@ func run(home, shell string) error {
 		return err
 	}
 
-	d := &daemon{registry: newRegistry(shell), token: token, home: home}
+	d := &daemon{registry: newRegistry(shell), token: token, home: home, identity: ptycontract.UnitName}
 
 	control, err := listen(ptycontract.ControlSocketPath(home))
 	if err != nil {
@@ -75,10 +76,7 @@ func run(home, shell string) error {
 	// has read it can connect. A caller watching for the socket file instead would see it appear at
 	// bind time on one socket and act while the other was still unbound — and would see a file a
 	// dead daemon left behind exactly the same way.
-	announcement, err := json.Marshal(ptycontract.Announcement{
-		Socket:  ptycontract.ControlSocketPath(home),
-		Version: ptycontract.ProtocolVersion,
-	})
+	announcement, err := json.Marshal(controlwire.NewAnnouncement(ptycontract.ControlSocketPath(home)))
 	if err != nil {
 		return err
 	}
