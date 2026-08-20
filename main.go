@@ -60,23 +60,25 @@ func run(home, shell string) error {
 
 	d := &daemon{registry: newRegistry(shell), token: token, home: home, identity: ptycontract.UnitName}
 
+	// One socket. A stream is a connection that stopped being request and response, not a second
+	// place — and a second address would be a second thing every peer derives, a second bind to get
+	// right, and a state where one is up and the other is not.
 	control, err := listen(ptycontract.ControlSocketPath(home))
 	if err != nil {
-		return err
-	}
-	stream, err := listen(ptycontract.StreamSocketPath(home))
-	if err != nil {
-		_ = control.Close()
 		return err
 	}
 
 	// The announcement, and it is the only readiness signal this daemon offers.
 	//
-	// It goes out after both listeners are bound and before anything is served, so a caller that
-	// has read it can connect. A caller watching for the socket file instead would see it appear at
-	// bind time on one socket and act while the other was still unbound — and would see a file a
-	// dead daemon left behind exactly the same way.
-	announcement, err := json.Marshal(controlwire.NewAnnouncement(ptycontract.ControlSocketPath(home)))
+	// It goes out after the listener is bound and before anything is served, so a caller that has
+	// read it can connect. A caller watching for the socket file instead would see it appear at bind
+	// time — and would see a file a dead daemon left behind exactly the same way.
+	//
+	// The token rides on it, because the process that reads this line is the one that started this
+	// daemon and is the only one that needs to be told. Every other peer derives the token's path
+	// from the home, which is what the file is for.
+	announcement, err := json.Marshal(
+		controlwire.NewAnnouncement(ptycontract.ControlSocketPath(home)).WithToken(token))
 	if err != nil {
 		return err
 	}
@@ -86,14 +88,12 @@ func run(home, shell string) error {
 	_ = os.Stdout.Sync()
 
 	go accept(control, d.serveControl)
-	go accept(stream, d.serveStream)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	_ = control.Close()
-	_ = stream.Close()
 	ended := d.registry.shutdown()
 	fmt.Fprintf(os.Stderr, "soksak-sidecar-pty: ended %d session(s) on shutdown\n", ended)
 	return nil
@@ -139,7 +139,7 @@ func listen(path string) (net.Listener, error) {
 	return listener, nil
 }
 
-// loadOrCreateToken reads the shared secret both sockets check, creating it once.
+// loadOrCreateToken reads the shared secret the greeting checks, creating it once.
 //
 // It is under the home, so a second home is a second daemon with a second token and neither can be
 // spoken to with the other's. The file is the daemon's alone to read.

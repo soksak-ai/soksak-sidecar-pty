@@ -115,22 +115,32 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 		t.Fatalf("the answer names no shell process: %+v", session)
 	}
 
-	// The stream socket, from the beginning of the ring.
-	stream, err := net.Dial("unix", ptycontract.StreamSocketPath(home))
+	// A second connection to the one socket, greeted like any other, then turned into a stream.
+	stream, err := net.Dial("unix", *announced.Socket)
 	if err != nil {
-		t.Fatalf("connecting to the stream socket: %v", err)
+		t.Fatalf("connecting for a stream: %v", err)
 	}
 	defer func() { _ = stream.Close() }()
-	from := uint64(0)
-	if err := json.NewEncoder(stream).Encode(request("attach", ptycontract.CommandAttach, map[string]any{
-		"request": ptycontract.Attach{Token: string(token), Session: session.Session, FromSeq: &from},
+	streamSend := json.NewEncoder(stream)
+	streamReader := bufio.NewReader(stream)
+	if err := streamSend.Encode(request("hello", controlwire.HelloCommand, map[string]any{
+		"protocol": controlwire.Protocol, "token": string(token),
 	})); err != nil {
 		t.Fatal(err)
 	}
-	streamReader := bufio.NewReader(stream)
+	if answer := next(t, streamReader); !answer.Ok {
+		t.Fatalf("the stream connection's greeting was refused: %s", answer.Error)
+	}
+
+	from := uint64(0)
+	if err := streamSend.Encode(request("attach", ptycontract.CommandAttach, map[string]any{
+		"request": ptycontract.Attach{Session: session.Session, FromSeq: &from},
+	})); err != nil {
+		t.Fatal(err)
+	}
 	ackLine, err := streamReader.ReadBytes('\n')
 	if err != nil {
-		t.Fatalf("the stream socket answered nothing: %v", err)
+		t.Fatalf("the attach answered nothing: %v", err)
 	}
 	var ackResponse controlwire.Response
 	if err := json.Unmarshal(ackLine, &ackResponse); err != nil {

@@ -79,11 +79,48 @@ func (d *daemon) serveControl(conn net.Conn) {
 			continue
 		}
 
+		// An attach turns this connection into a stream. It answers on the envelope like anything
+		// else and then stops being request and response, which is why it is handled here rather
+		// than on a socket of its own: a stream is a connection that changed, not a different place.
+		if request.Command == ptycontract.CommandAttach {
+			if !greeted {
+				_ = writer.Encode(refusal(request, "GREETING", "this connection has not agreed a protocol"))
+				return
+			}
+			d.attach(conn, writer, request)
+			return
+		}
+
 		answer := d.answer(request, commands, &greeted)
 		if err := writer.Encode(answer); err != nil {
 			return
 		}
 	}
+}
+
+// attach answers, and then the connection carries output until the session ends.
+func (d *daemon) attach(conn net.Conn, writer *json.Encoder, request controlwire.Request) {
+	ask, err := decode[ptycontract.Attach](request.Args)
+	if err != nil {
+		_ = writer.Encode(refusal(request, "ARGUMENT", err.Error()))
+		return
+	}
+	value, err := d.registry.get(ask.Session)
+	if err != nil {
+		_ = writer.Encode(refusal(request, "NO_SESSION", err.Error()))
+		return
+	}
+	at, mode := value.ring.resolve(ask.FromSeq)
+	answer := controlwire.Response{
+		ID: request.ID, Ok: true,
+		Result: controlwire.Answer{Code: "OK", Data: ptycontract.Attached{
+			Session: value.id, Mode: mode, StartSeq: at,
+		}},
+	}
+	if err := writer.Encode(answer); err != nil {
+		return
+	}
+	deliver(conn, value.ring, at)
 }
 
 // answer runs one request. The greeting has to come first: a caller that skipped it has not agreed a
