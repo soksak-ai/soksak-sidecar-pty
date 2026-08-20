@@ -28,6 +28,10 @@ type session struct {
 	mu      sync.Mutex
 	written uint64
 	closed  bool
+	// paused is what the reader is doing, recorded rather than derived. A caller deriving it from
+	// written and acked would be applying the watermark rule a second time, and two applications of
+	// one rule are two answers waiting to disagree.
+	paused bool
 	// resume releases the reader when a paused client has acked back down to the low mark.
 	resume chan struct{}
 }
@@ -114,8 +118,14 @@ func (value *session) pump() {
 			value.mu.Unlock()
 
 			for value.ring.paused(written) {
+				value.mu.Lock()
+				value.paused = true
+				value.mu.Unlock()
 				<-value.resume
 			}
+			value.mu.Lock()
+			value.paused = false
+			value.mu.Unlock()
 		}
 		if err != nil {
 			value.ring.end()
@@ -237,12 +247,20 @@ func (reg *registry) list() []ptycontract.Info {
 		if value.cmd != nil && value.cmd.Process != nil {
 			pid = uint32(value.cmd.Process.Pid)
 		}
+		value.mu.Lock()
+		written, paused := value.written, value.paused
+		value.mu.Unlock()
+		acked, retained := value.ring.state()
 		out = append(out, ptycontract.Info{
 			Session:     value.id,
 			PaneID:      value.paneID,
 			ShellPID:    pid,
 			Generation:  value.generation,
 			WindowLabel: window,
+			Written:     written,
+			Acked:       acked,
+			Paused:      paused,
+			Retained:    retained,
 		})
 	}
 	return out

@@ -120,6 +120,14 @@ func (r *ring) read(at uint64) ([]byte, uint64) {
 	}
 }
 
+// state is what flow control is doing, for a caller that has to tell a paused reader from a hung
+// program. The two look the same from outside, and only this separates them.
+func (r *ring) state() (acked uint64, retained int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.acked, len(r.bytes)
+}
+
 // ack records how far the client has taken, and reports whether the reader may run.
 func (r *ring) ack(bytes uint64) {
 	r.mu.Lock()
