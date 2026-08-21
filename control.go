@@ -230,11 +230,8 @@ func (d *daemon) attachLease(conn net.Conn, writer *json.Encoder, request contro
 		_ = writer.Encode(refusal(request, "NO_SESSION", err.Error()))
 		return
 	}
-	if err := value.attachRenderer(); err != nil {
-		_ = writer.Encode(refusal(request, "RENDERER_ATTACHED", err.Error()))
-		return
-	}
-	defer value.detachRenderer()
+	generation := value.replaceRenderer()
+	defer value.detachRenderer(generation)
 	at, err := value.ring.consumeLease(ask.Token)
 	if err != nil {
 		_ = writer.Encode(refusal(request, "LEASE_BROKEN", err.Error()))
@@ -289,11 +286,12 @@ func (d *daemon) attach(conn net.Conn, writer *json.Encoder, request controlwire
 		_ = writer.Encode(refusal(request, "NO_SESSION", err.Error()))
 		return
 	}
-	if err := value.attachRenderer(); err != nil {
+	generation, err := value.attachRenderer()
+	if err != nil {
 		_ = writer.Encode(refusal(request, "RENDERER_ATTACHED", err.Error()))
 		return
 	}
-	defer value.detachRenderer()
+	defer value.detachRenderer(generation)
 	at, mode := value.ring.resolve(ask.FromSeq)
 	answer := controlwire.Response{
 		ID: request.ID, Ok: true,

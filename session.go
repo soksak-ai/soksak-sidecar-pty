@@ -39,8 +39,8 @@ type session struct {
 	// paused is what the reader is doing, recorded rather than derived. A caller deriving it from
 	// written and acked would be applying the watermark rule a second time, and two applications of
 	// one rule are two answers waiting to disagree.
-	paused           bool
-	rendererAttached bool
+	paused             bool
+	rendererGeneration uint64
 	// resume releases the reader when a paused client has acked back down to the low mark.
 	resume        chan struct{}
 	eventSequence uint64
@@ -172,19 +172,32 @@ func (value *session) pump() {
 	}
 }
 
-func (value *session) attachRenderer() error {
+func (value *session) attachRenderer() (uint64, error) {
 	value.mu.Lock()
 	defer value.mu.Unlock()
-	if value.rendererAttached {
-		return fmt.Errorf("session %d already has an attached renderer", value.id)
+	if value.rendererGeneration != 0 {
+		return 0, fmt.Errorf("session %d already has an attached renderer", value.id)
 	}
-	value.rendererAttached = true
-	return nil
+	value.rendererGeneration = 1
+	return value.rendererGeneration, nil
 }
 
-func (value *session) detachRenderer() {
+func (value *session) replaceRenderer() uint64 {
 	value.mu.Lock()
-	value.rendererAttached = false
+	value.rendererGeneration++
+	if value.rendererGeneration == 0 {
+		value.rendererGeneration = 1
+	}
+	generation := value.rendererGeneration
+	value.mu.Unlock()
+	return generation
+}
+
+func (value *session) detachRenderer(generation uint64) {
+	value.mu.Lock()
+	if value.rendererGeneration == generation {
+		value.rendererGeneration = 0
+	}
 	value.mu.Unlock()
 	select {
 	case value.resume <- struct{}{}:
@@ -192,9 +205,15 @@ func (value *session) detachRenderer() {
 	}
 }
 
+func (value *session) rendererIsAttached() bool {
+	value.mu.Lock()
+	defer value.mu.Unlock()
+	return value.rendererGeneration != 0
+}
+
 func (value *session) shouldPause(written uint64) bool {
 	value.mu.Lock()
-	attached := value.rendererAttached
+	attached := value.rendererGeneration != 0
 	value.mu.Unlock()
 	return attached && value.ring.paused(written)
 }
