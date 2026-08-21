@@ -10,9 +10,19 @@ case "$target" in *windows*) extension=.exe ;; esac
 
 if [ -n "$target" ]; then
   output="$build_dir/$target/release/$name$extension"
-  GOOS="$(case "$target" in *windows*) echo windows;; *linux*) echo linux;; *darwin*) echo darwin;; *) echo "unsupported target: $target" >&2; exit 1;; esac)" \
-    GOARCH="$(case "$target" in aarch64-*|arm64-*) echo arm64;; x86_64-*) echo amd64;; *) echo "unsupported target: $target" >&2; exit 1;; esac)" \
-    go build -o "$output" .
+  case "$target" in
+    *windows*) target_os=windows ;;
+    *linux*) target_os=linux ;;
+    *darwin*) target_os=darwin ;;
+    *) echo "unsupported target: $target" >&2; exit 1 ;;
+  esac
+  case "$target" in
+    aarch64-*|arm64-*) target_arch=arm64 ;;
+    x86_64-*) target_arch=amd64 ;;
+    *) echo "unsupported target: $target" >&2; exit 1 ;;
+  esac
+  mkdir -p "$(dirname "$output")"
+  GOOS="$target_os" GOARCH="$target_arch" go build -o "$output" .
 else
   output="$build_dir/release/$name"
   mkdir -p "$(dirname "$output")"
@@ -23,5 +33,5 @@ mkdir -p "$dist"
 temporary="$dist/.$name.tmp.$$"
 cp "$output" "$temporary"
 chmod +x "$temporary"
-mv -f "$temporary" "$dist/$name$extension"
-printf 'staged: %s\n' "$dist/$name$extension"
+mv -f "$temporary" "$dist/$name"
+printf 'staged: %s\n' "$dist/$name"

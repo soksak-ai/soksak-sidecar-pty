@@ -1,10 +1,10 @@
 {
+  "spec": "soksak-spec-sidecar@0.0.1",
   "id": "soksak-sidecar-pty",
   "version": "0.0.1",
-  "releaseTag": "v0.0.1",
-  "repository": "https://github.com/soksak-ai/soksak-sidecar-pty",
   "interface": {
     "id": "soksak-spec-sidecar-pty",
     "version": "0.0.1"
-  }
+  },
+  "process": "dist/soksak-sidecar-pty"
 }
