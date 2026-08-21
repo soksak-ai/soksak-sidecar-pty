@@ -162,8 +162,8 @@ func (d *daemon) prepareObserver(args map[string]json.RawMessage) (string, any, 
 	if err != nil {
 		return "ARGUMENT", nil, err
 	}
-	if request.PaneID == "" || request.WindowLabel == "" || request.SidecarID == "" {
-		return "ARGUMENT", nil, fmt.Errorf("paneId, windowLabel and sidecarId are required")
+	if request.PaneID == "" || request.WindowLabel == "" || request.Provider == "" {
+		return "ARGUMENT", nil, fmt.Errorf("paneId, windowLabel and provider are required")
 	}
 	bytes := make([]byte, 24)
 	if _, err := rand.Read(bytes); err != nil {

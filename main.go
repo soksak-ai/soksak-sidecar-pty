@@ -62,7 +62,7 @@ func run(home, runtimeRoot, shell string) error {
 		return err
 	}
 
-	d := &daemon{registry: newRegistry(shell), token: token, home: home, identity: ptycontract.SidecarID}
+	d := &daemon{registry: newRegistry(shell), token: token, home: home, identity: ptycontract.UnitName}
 
 	// One socket. A stream is a connection that stopped being request and response, not a second
 	// place — and a second address would be a second thing every peer derives, a second bind to get
