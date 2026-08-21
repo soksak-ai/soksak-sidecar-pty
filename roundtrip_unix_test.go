@@ -32,6 +32,11 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	runtimeRoot, err := os.MkdirTemp("/tmp", "ptr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(runtimeRoot) })
 	binary := filepath.Join(t.TempDir(), "soksak-sidecar-pty")
 	build := exec.Command("go", "build", "-o", binary, ".")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -42,7 +47,7 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 	if shell == "" {
 		shell = "/bin/sh"
 	}
-	daemon := exec.Command(binary, "-home", home, "-shell", shell)
+	daemon := exec.Command(binary, "-home", home, "-runtime", runtimeRoot, "-shell", shell)
 	stdout, pipeErr := daemon.StdoutPipe()
 	if pipeErr != nil {
 		t.Fatal(pipeErr)
@@ -68,11 +73,11 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 	if announced.Protocol == nil || *announced.Protocol != controlwire.Protocol {
 		t.Fatalf("the announcement names protocol %v, this build speaks %d", announced.Protocol, controlwire.Protocol)
 	}
-	if announced.Socket == nil || *announced.Socket != ptycontract.ControlSocketPath(home) {
-		t.Fatalf("the announcement names %v, the contract derives %q", announced.Socket, ptycontract.ControlSocketPath(home))
+	if announced.Socket == nil || *announced.Socket != ptycontract.ControlSocketPath(runtimeRoot) {
+		t.Fatalf("the announcement names %v, the contract derives %q", announced.Socket, ptycontract.ControlSocketPath(runtimeRoot))
 	}
 
-	token, err := os.ReadFile(ptycontract.TokenPath(home))
+	token, err := os.ReadFile(ptycontract.TokenPath(runtimeRoot))
 	if err != nil {
 		t.Fatalf("reading the token the daemon issued: %v", err)
 	}

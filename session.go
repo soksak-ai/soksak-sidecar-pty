@@ -21,9 +21,11 @@ type session struct {
 	windowLabel string
 	generation  uint64
 
-	master *os.File
-	cmd    *exec.Cmd
-	ring   *ring
+	master         *os.File
+	cmd            *exec.Cmd
+	ring           *ring
+	observers      map[*observer]struct{}
+	observerTokens map[string]*observer
 
 	mu      sync.Mutex
 	written uint64
@@ -31,9 +33,11 @@ type session struct {
 	// paused is what the reader is doing, recorded rather than derived. A caller deriving it from
 	// written and acked would be applying the watermark rule a second time, and two applications of
 	// one rule are two answers waiting to disagree.
-	paused bool
+	paused           bool
+	rendererAttached bool
 	// resume releases the reader when a paused client has acked back down to the low mark.
-	resume chan struct{}
+	resume        chan struct{}
+	eventSequence uint64
 }
 
 type registry struct {
@@ -55,6 +59,13 @@ func newRegistry(shell string) *registry {
 // here would tie a session to whatever launched this daemon, and this process outlives the one that
 // launched it — that is the reason it is a process at all.
 func (reg *registry) open(request ptycontract.Open) (*session, error) {
+	return reg.openWithObserver(request, nil)
+}
+
+func (reg *registry) openWithObserver(
+	request ptycontract.Open,
+	prepared *preparedObserver,
+) (*session, error) {
 	if request.Cols == 0 || request.Rows == 0 {
 		return nil, fmt.Errorf("a session needs a size: cols=%d rows=%d", request.Cols, request.Rows)
 	}
@@ -86,17 +97,29 @@ func (reg *registry) open(request ptycontract.Open) (*session, error) {
 	reg.next++
 	reg.generation++
 	value := &session{
-		id:          reg.next,
-		paneID:      request.PaneID,
-		windowLabel: request.WindowLabel,
-		generation:  reg.generation,
-		master:      master,
-		cmd:         command,
-		ring:        newRing(ptycontract.HighWatermark),
-		resume:      make(chan struct{}, 1),
+		id:             reg.next,
+		paneID:         request.PaneID,
+		windowLabel:    request.WindowLabel,
+		generation:     reg.generation,
+		master:         master,
+		cmd:            command,
+		ring:           newRing(ptycontract.HighWatermark),
+		observers:      make(map[*observer]struct{}),
+		observerTokens: make(map[string]*observer),
+		resume:         make(chan struct{}, 1),
+	}
+	if prepared != nil {
+		value.observers[prepared.observer] = struct{}{}
+		value.observerTokens[request.ObserverToken] = prepared.observer
 	}
 	reg.sessions[value.id] = value
 	reg.mu.Unlock()
+	if prepared != nil {
+		prepared.observer.publishOpened(ptycontract.OpenedObservation{
+			Session: value.id, Generation: value.generation,
+			EventSequence: 0, OutputSequence: 0,
+		})
+	}
 
 	go value.pump()
 	return value, nil
@@ -113,11 +136,20 @@ func (value *session) pump() {
 		count, err := value.master.Read(buffer)
 		if count > 0 {
 			value.mu.Lock()
+			from := value.written
 			value.written = value.ring.write(buffer[:count])
+			value.eventSequence++
+			eventSequence := value.eventSequence
 			written := value.written
+			for observer := range value.observers {
+				observer.publishOutput(ptycontract.OutputObservation{
+					EventSequence: eventSequence, FromSequence: from,
+					ThroughSequence: written, Bytes: buffer[:count],
+				})
+			}
 			value.mu.Unlock()
 
-			for value.ring.paused(written) {
+			for value.shouldPause(written) {
 				value.mu.Lock()
 				value.paused = true
 				value.mu.Unlock()
@@ -135,6 +167,33 @@ func (value *session) pump() {
 	}
 }
 
+func (value *session) attachRenderer() error {
+	value.mu.Lock()
+	defer value.mu.Unlock()
+	if value.rendererAttached {
+		return fmt.Errorf("session %d already has an attached renderer", value.id)
+	}
+	value.rendererAttached = true
+	return nil
+}
+
+func (value *session) detachRenderer() {
+	value.mu.Lock()
+	value.rendererAttached = false
+	value.mu.Unlock()
+	select {
+	case value.resume <- struct{}{}:
+	default:
+	}
+}
+
+func (value *session) shouldPause(written uint64) bool {
+	value.mu.Lock()
+	attached := value.rendererAttached
+	value.mu.Unlock()
+	return attached && value.ring.paused(written)
+}
+
 func (value *session) write(data []byte) error {
 	value.mu.Lock()
 	closed := value.closed
@@ -150,7 +209,61 @@ func (value *session) resize(cols, rows uint16) error {
 	if cols == 0 || rows == 0 {
 		return fmt.Errorf("a session cannot be sized to cols=%d rows=%d", cols, rows)
 	}
-	return pty.Setsize(value.master, &pty.Winsize{Cols: cols, Rows: rows})
+	if err := pty.Setsize(value.master, &pty.Winsize{Cols: cols, Rows: rows}); err != nil {
+		return err
+	}
+	value.mu.Lock()
+	value.eventSequence++
+	event := ptycontract.ResizeObservation{EventSequence: value.eventSequence, Cols: cols, Rows: rows}
+	for observer := range value.observers {
+		observer.publishResize(event)
+	}
+	value.mu.Unlock()
+	return nil
+}
+
+func (value *session) observe(token string) (*observer, ptycontract.Observed, error) {
+	value.mu.Lock()
+	defer value.mu.Unlock()
+	if token != "" {
+		observer := value.observerTokens[token]
+		if observer == nil {
+			return nil, ptycontract.Observed{}, fmt.Errorf("observer token is not bound to session %d", value.id)
+		}
+		delete(value.observerTokens, token)
+		return observer, ptycontract.Observed{
+			Session: value.id, Generation: value.generation,
+			StartEventSequence: value.eventSequence, StartOutputSequence: value.written,
+		}, nil
+	}
+	observer := newObserver(ptycontract.ObserverBufferBytes)
+	value.observers[observer] = struct{}{}
+	floor, through, retained := value.ring.snapshot()
+	if floor > 0 {
+		observer.mu.Lock()
+		observer.publishGapLocked(ptycontract.GapObservation{
+			FromEventSequence: 0, ThroughEventSequence: value.eventSequence,
+			FromSequence: 0, ThroughSequence: floor,
+		})
+		observer.mu.Unlock()
+	}
+	if len(retained) > 0 {
+		observer.publishOutput(ptycontract.OutputObservation{
+			EventSequence: value.eventSequence, FromSequence: floor,
+			ThroughSequence: through, Bytes: retained,
+		})
+	}
+	return observer, ptycontract.Observed{
+		Session: value.id, Generation: value.generation,
+		StartEventSequence: value.eventSequence, StartOutputSequence: floor,
+	}, nil
+}
+
+func (value *session) removeObserver(observer *observer) {
+	value.mu.Lock()
+	delete(value.observers, observer)
+	value.mu.Unlock()
+	observer.close()
 }
 
 // ack records the client's progress and releases the reader when it is far enough back.
@@ -179,6 +292,11 @@ func (value *session) reap() {
 		return
 	}
 	value.closed = true
+	value.eventSequence++
+	end := ptycontract.EndObservation{EventSequence: value.eventSequence}
+	for observer := range value.observers {
+		observer.publishEnd(end)
+	}
 	value.mu.Unlock()
 
 	if value.cmd != nil && value.cmd.Process != nil {

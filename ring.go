@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sync"
 
 	ptycontract "github.com/soksak/soksak-contract-pty"
@@ -31,27 +32,87 @@ type ring struct {
 	// waiters are readers parked until either more bytes arrive or the session ends.
 	waiters []chan struct{}
 	ended   bool
+	leases  map[string]*ringLease
+}
+
+type ringLease struct {
+	after  uint64
+	broken bool
 }
 
 func newRing(capacity int) *ring {
 	if capacity <= 0 {
 		capacity = ptycontract.HighWatermark
 	}
-	return &ring{capacity: capacity}
+	return &ring{capacity: capacity, leases: make(map[string]*ringLease)}
 }
 
 // write appends output and answers the sequence the next byte will carry.
 func (r *ring) write(data []byte) uint64 {
 	r.mu.Lock()
 	r.bytes = append(r.bytes, data...)
-	if overflow := len(r.bytes) - r.capacity; overflow > 0 {
-		r.bytes = r.bytes[overflow:]
-		r.floor += uint64(overflow)
-	}
+	r.trimLocked()
 	next := r.floor + uint64(len(r.bytes))
 	r.wakeLocked()
 	r.mu.Unlock()
 	return next
+}
+
+func (r *ring) trimLocked() {
+	live := r.floor + uint64(len(r.bytes))
+	targetFloor := uint64(0)
+	if live > uint64(r.capacity) {
+		targetFloor = live - uint64(r.capacity)
+	}
+	for _, lease := range r.leases {
+		if lease.broken || lease.after >= targetFloor {
+			continue
+		}
+		if live-lease.after > ptycontract.LeaseBufferBytes {
+			lease.broken = true
+			continue
+		}
+		targetFloor = lease.after
+	}
+	if targetFloor > r.floor {
+		overflow := int(targetFloor - r.floor)
+		r.bytes = r.bytes[overflow:]
+		r.floor = targetFloor
+	}
+}
+
+func (r *ring) lease(token string, after uint64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	live := r.floor + uint64(len(r.bytes))
+	if after < r.floor || after > live {
+		return fmt.Errorf("lease sequence %d is outside retained range [%d,%d]", after, r.floor, live)
+	}
+	r.leases[token] = &ringLease{after: after}
+	return nil
+}
+
+func (r *ring) consumeLease(token string) (uint64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	lease := r.leases[token]
+	if lease == nil {
+		return 0, fmt.Errorf("lease %s does not exist", token)
+	}
+	delete(r.leases, token)
+	if lease.broken || lease.after < r.floor {
+		r.trimLocked()
+		return 0, fmt.Errorf("lease %s is broken", token)
+	}
+	r.trimLocked()
+	return lease.after, nil
+}
+
+func (r *ring) expireLease(token string) {
+	r.mu.Lock()
+	delete(r.leases, token)
+	r.trimLocked()
+	r.mu.Unlock()
 }
 
 // end releases every parked reader. A reader that stays parked on a dead session is a client that
@@ -128,11 +189,18 @@ func (r *ring) state() (acked uint64, retained int) {
 	return r.acked, len(r.bytes)
 }
 
-// ack records how far the client has taken, and reports whether the reader may run.
-func (r *ring) ack(bytes uint64) {
+// snapshot returns the retained source range as one immutable copy.
+func (r *ring) snapshot() (floor uint64, through uint64, data []byte) {
 	r.mu.Lock()
-	if bytes > r.acked {
-		r.acked = bytes
+	defer r.mu.Unlock()
+	return r.floor, r.floor + uint64(len(r.bytes)), append([]byte(nil), r.bytes...)
+}
+
+// ack records the absolute source position the client has taken.
+func (r *ring) ack(throughSeq uint64) {
+	r.mu.Lock()
+	if throughSeq > r.acked {
+		r.acked = throughSeq
 	}
 	r.mu.Unlock()
 }

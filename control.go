@@ -2,10 +2,14 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
+	"sync"
+	"time"
 
 	controlwire "github.com/soksak/soksak-contract-control"
 	ptycontract "github.com/soksak/soksak-contract-pty"
@@ -23,10 +27,20 @@ import (
 // call would have been granted to something no manifest declared.
 
 type daemon struct {
-	registry *registry
-	token    string
-	home     string
-	identity string
+	registry         *registry
+	token            string
+	home             string
+	identity         string
+	leaseMu          sync.Mutex
+	leases           map[string]uint64
+	observerMu       sync.Mutex
+	pendingObservers map[string]*preparedObserver
+}
+
+type preparedObserver struct {
+	request  ptycontract.PrepareObserver
+	observer *observer
+	ready    bool
 }
 
 // handler answers one command's arguments.
@@ -34,15 +48,17 @@ type handler func(args map[string]json.RawMessage) (string, any, error)
 
 func (d *daemon) commands() map[string]handler {
 	return map[string]handler{
-		ptycontract.CommandOpen:        d.open,
-		ptycontract.CommandWrite:       d.write,
-		ptycontract.CommandResize:      d.resize,
-		ptycontract.CommandAck:         d.ack,
-		ptycontract.CommandClose:       d.closeSession,
-		ptycontract.CommandSessions:    d.sessions,
-		ptycontract.CommandPane:        d.pane,
-		ptycontract.CommandCloseWindow: d.closeWindow,
-		ptycontract.CommandStatus:      d.status,
+		ptycontract.CommandOpen:            d.open,
+		ptycontract.CommandWrite:           d.write,
+		ptycontract.CommandResize:          d.resize,
+		ptycontract.CommandAck:             d.ack,
+		ptycontract.CommandClose:           d.closeSession,
+		ptycontract.CommandSessions:        d.sessions,
+		ptycontract.CommandPane:            d.pane,
+		ptycontract.CommandCloseWindow:     d.closeWindow,
+		ptycontract.CommandStatus:          d.status,
+		ptycontract.CommandLease:           d.lease,
+		ptycontract.CommandPrepareObserver: d.prepareObserver,
 	}
 }
 
@@ -82,12 +98,20 @@ func (d *daemon) serveControl(conn net.Conn) {
 		// An attach turns this connection into a stream. It answers on the envelope like anything
 		// else and then stops being request and response, which is why it is handled here rather
 		// than on a socket of its own: a stream is a connection that changed, not a different place.
-		if request.Command == ptycontract.CommandAttach {
+		if request.Command == ptycontract.CommandAttach || request.Command == ptycontract.CommandAttachLease || request.Command == ptycontract.CommandObserve || request.Command == ptycontract.CommandObservePrepared {
 			if !greeted {
 				_ = writer.Encode(refusal(request, "GREETING", "this connection has not agreed a protocol"))
 				return
 			}
-			d.attach(conn, writer, request)
+			if request.Command == ptycontract.CommandAttach {
+				d.attach(conn, writer, request)
+			} else if request.Command == ptycontract.CommandAttachLease {
+				d.attachLease(conn, writer, request)
+			} else if request.Command == ptycontract.CommandObserve {
+				d.observe(conn, writer, request)
+			} else {
+				d.observePrepared(conn, writer, request)
+			}
 			return
 		}
 
@@ -96,6 +120,161 @@ func (d *daemon) serveControl(conn net.Conn) {
 			return
 		}
 	}
+}
+
+func (d *daemon) lease(args map[string]json.RawMessage) (string, any, error) {
+	request, err := decode[ptycontract.Lease](args)
+	if err != nil {
+		return "ARGUMENT", nil, err
+	}
+	value, err := d.registry.get(request.Session)
+	if err != nil {
+		return "NO_SESSION", nil, err
+	}
+	bytes := make([]byte, 24)
+	if _, err := rand.Read(bytes); err != nil {
+		return "RANDOM", nil, err
+	}
+	token := hex.EncodeToString(bytes)
+	if err := value.ring.lease(token, request.AfterSequence); err != nil {
+		return "LEASE_CURSOR", nil, err
+	}
+	d.leaseMu.Lock()
+	if d.leases == nil {
+		d.leases = make(map[string]uint64)
+	}
+	d.leases[token] = request.Session
+	d.leaseMu.Unlock()
+	time.AfterFunc(ptycontract.LeaseDurationMs*time.Millisecond, func() {
+		d.leaseMu.Lock()
+		delete(d.leases, token)
+		d.leaseMu.Unlock()
+		value.ring.expireLease(token)
+	})
+	return "", ptycontract.Leased{
+		Token: token, Session: request.Session, AfterSequence: request.AfterSequence,
+		ExpiresAtMs: time.Now().Add(ptycontract.LeaseDurationMs * time.Millisecond).UnixMilli(),
+	}, nil
+}
+
+func (d *daemon) prepareObserver(args map[string]json.RawMessage) (string, any, error) {
+	request, err := decode[ptycontract.PrepareObserver](args)
+	if err != nil {
+		return "ARGUMENT", nil, err
+	}
+	if request.PaneID == "" || request.WindowLabel == "" || request.Provider == "" {
+		return "ARGUMENT", nil, fmt.Errorf("paneId, windowLabel and provider are required")
+	}
+	bytes := make([]byte, 24)
+	if _, err := rand.Read(bytes); err != nil {
+		return "RANDOM", nil, err
+	}
+	token := hex.EncodeToString(bytes)
+	d.observerMu.Lock()
+	if d.pendingObservers == nil {
+		d.pendingObservers = make(map[string]*preparedObserver)
+	}
+	d.pendingObservers[token] = &preparedObserver{request: request, observer: newObserver(ptycontract.ObserverBufferBytes)}
+	d.observerMu.Unlock()
+	time.AfterFunc(30*time.Second, func() {
+		d.observerMu.Lock()
+		delete(d.pendingObservers, token)
+		d.observerMu.Unlock()
+	})
+	return "", ptycontract.ObserverPrepared{Token: token}, nil
+}
+
+func (d *daemon) observePrepared(conn net.Conn, writer *json.Encoder, request controlwire.Request) {
+	ask, err := decode[ptycontract.ObservePrepared](request.Args)
+	if err != nil {
+		_ = writer.Encode(refusal(request, "ARGUMENT", err.Error()))
+		return
+	}
+	d.observerMu.Lock()
+	prepared := d.pendingObservers[ask.Token]
+	if prepared != nil {
+		prepared.ready = true
+	}
+	d.observerMu.Unlock()
+	if prepared == nil {
+		_ = writer.Encode(refusal(request, "OBSERVER_NOT_FOUND", "prepared observer does not exist"))
+		return
+	}
+	if err := writer.Encode(controlwire.Response{
+		ID: request.ID, Ok: true,
+		Result: controlwire.Answer{Code: "OK", Data: ptycontract.PreparedObserved{Token: ask.Token}},
+	}); err != nil {
+		return
+	}
+	deliverObservations(conn, prepared.observer)
+}
+
+func (d *daemon) attachLease(conn net.Conn, writer *json.Encoder, request controlwire.Request) {
+	ask, err := decode[ptycontract.AttachLease](request.Args)
+	if err != nil {
+		_ = writer.Encode(refusal(request, "ARGUMENT", err.Error()))
+		return
+	}
+	d.leaseMu.Lock()
+	session, found := d.leases[ask.Token]
+	if found {
+		delete(d.leases, ask.Token)
+	}
+	d.leaseMu.Unlock()
+	if !found {
+		_ = writer.Encode(refusal(request, "LEASE_NOT_FOUND", "snapshot lease does not exist"))
+		return
+	}
+	value, err := d.registry.get(session)
+	if err != nil {
+		_ = writer.Encode(refusal(request, "NO_SESSION", err.Error()))
+		return
+	}
+	if err := value.attachRenderer(); err != nil {
+		_ = writer.Encode(refusal(request, "RENDERER_ATTACHED", err.Error()))
+		return
+	}
+	defer value.detachRenderer()
+	at, err := value.ring.consumeLease(ask.Token)
+	if err != nil {
+		_ = writer.Encode(refusal(request, "LEASE_BROKEN", err.Error()))
+		return
+	}
+	if err := writer.Encode(controlwire.Response{
+		ID: request.ID, Ok: true,
+		Result: controlwire.Answer{Code: "OK", Data: ptycontract.Attached{
+			Session: session, Mode: ptycontract.ModeResumed, StartSeq: at,
+		}},
+	}); err != nil {
+		return
+	}
+	deliver(conn, value.ring, at)
+}
+
+func (d *daemon) observe(conn net.Conn, writer *json.Encoder, request controlwire.Request) {
+	ask, err := decode[ptycontract.Observe](request.Args)
+	if err != nil {
+		_ = writer.Encode(refusal(request, "ARGUMENT", err.Error()))
+		return
+	}
+	value, err := d.registry.get(ask.Session)
+	if err != nil {
+		_ = writer.Encode(refusal(request, "NO_SESSION", err.Error()))
+		return
+	}
+	observer, observed, err := value.observe(ask.Token)
+	if err != nil {
+		_ = writer.Encode(refusal(request, "OBSERVER_TOKEN", err.Error()))
+		return
+	}
+	defer value.removeObserver(observer)
+	if err := writer.Encode(controlwire.Response{
+		ID: request.ID, Ok: true,
+		Result: controlwire.Answer{Code: "OK", Data: observed},
+	}); err != nil {
+		return
+	}
+	deliverObservations(conn, observer)
 }
 
 // attach answers, and then the connection carries output until the session ends.
@@ -110,6 +289,11 @@ func (d *daemon) attach(conn net.Conn, writer *json.Encoder, request controlwire
 		_ = writer.Encode(refusal(request, "NO_SESSION", err.Error()))
 		return
 	}
+	if err := value.attachRenderer(); err != nil {
+		_ = writer.Encode(refusal(request, "RENDERER_ATTACHED", err.Error()))
+		return
+	}
+	defer value.detachRenderer()
 	at, mode := value.ring.resolve(ask.FromSeq)
 	answer := controlwire.Response{
 		ID: request.ID, Ok: true,
@@ -235,7 +419,23 @@ func (d *daemon) open(args map[string]json.RawMessage) (string, any, error) {
 	if existing, held := d.registry.byPane(request.PaneID); held && request.PaneID != "" {
 		return "", opened(existing, false), nil
 	}
-	value, err := d.registry.open(request)
+	var prepared *preparedObserver
+	if request.ObserverToken != "" {
+		d.observerMu.Lock()
+		prepared = d.pendingObservers[request.ObserverToken]
+		if prepared != nil && prepared.ready &&
+			prepared.request.PaneID == request.PaneID &&
+			prepared.request.WindowLabel == request.WindowLabel {
+			delete(d.pendingObservers, request.ObserverToken)
+		} else {
+			prepared = nil
+		}
+		d.observerMu.Unlock()
+		if prepared == nil {
+			return "OBSERVER_NOT_READY", nil, fmt.Errorf("observer token is absent, unready, or bound to another terminal key")
+		}
+	}
+	value, err := d.registry.openWithObserver(request, prepared)
 	if err != nil {
 		return "OPEN", nil, err
 	}
@@ -296,7 +496,7 @@ func (d *daemon) ack(args map[string]json.RawMessage) (string, any, error) {
 	if err != nil {
 		return "NO_SESSION", nil, err
 	}
-	value.ack(request.Bytes)
+	value.ack(request.ThroughSeq)
 	return "", request, nil
 }
 

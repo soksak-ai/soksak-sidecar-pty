@@ -30,6 +30,7 @@ import (
 
 func main() {
 	home := flag.String("home", "", "the identity home this daemon serves; every socket and the token derive from it")
+	runtimeRoot := flag.String("runtime", "", "the identity runtime root for sockets and tokens")
 	shell := flag.String("shell", "", "the shell a session runs when the caller names none")
 	flag.Parse()
 
@@ -37,7 +38,10 @@ func main() {
 		fail("no home was named. Every socket, the token and the sessions derive from it, and this " +
 			"daemon derives none of it for itself: pass -home <path>")
 	}
-	if err := run(*home, *shell); err != nil {
+	if *runtimeRoot == "" || !filepath.IsAbs(*runtimeRoot) {
+		fail("-runtime requires an absolute identity runtime root")
+	}
+	if err := run(*home, *runtimeRoot, *shell); err != nil {
 		fail(err.Error())
 	}
 }
@@ -47,13 +51,13 @@ func fail(message string) {
 	os.Exit(1)
 }
 
-func run(home, shell string) error {
-	runDirectory := filepath.Join(home, "run")
+func run(home, runtimeRoot, shell string) error {
+	runDirectory := runtimeRoot
 	if err := os.MkdirAll(runDirectory, 0o700); err != nil {
 		return fmt.Errorf("preparing %s: %w", runDirectory, err)
 	}
 
-	token, err := loadOrCreateToken(ptycontract.TokenPath(home))
+	token, err := loadOrCreateToken(ptycontract.TokenPath(runtimeRoot))
 	if err != nil {
 		return err
 	}
@@ -63,7 +67,7 @@ func run(home, shell string) error {
 	// One socket. A stream is a connection that stopped being request and response, not a second
 	// place — and a second address would be a second thing every peer derives, a second bind to get
 	// right, and a state where one is up and the other is not.
-	control, err := listen(ptycontract.ControlSocketPath(home))
+	control, err := listen(ptycontract.ControlSocketPath(runtimeRoot))
 	if err != nil {
 		return err
 	}
@@ -78,7 +82,7 @@ func run(home, shell string) error {
 	// daemon and is the only one that needs to be told. Every other peer derives the token's path
 	// from the home, which is what the file is for.
 	announcement, err := json.Marshal(
-		controlwire.NewAnnouncement(ptycontract.ControlSocketPath(home)).WithToken(token))
+		controlwire.NewAnnouncement(ptycontract.ControlSocketPath(runtimeRoot)).WithToken(token))
 	if err != nil {
 		return err
 	}
@@ -143,7 +147,7 @@ func listen(path string) (net.Listener, error) {
 	// 2026-08-20 on this platform: a home under the temporary directory produced exactly that.
 	if len(path) > socketPathLimit {
 		return nil, fmt.Errorf("the socket path is %d bytes and this platform accepts %d: %s\n"+
-			"Every socket derives from the home, so a shorter home is what shortens this",
+			"Every socket derives from the runtime root, so declare a shorter runtime root",
 			len(path), socketPathLimit, path)
 	}
 	listener, err := net.Listen("unix", path)
