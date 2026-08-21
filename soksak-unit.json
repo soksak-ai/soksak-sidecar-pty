@@ -1,0 +1,14 @@
+{
+  "spec": "soksak-spec-unit@0.0.1",
+  "kind": "sidecar",
+  "id": "soksak-sidecar-pty",
+  "version": "0.0.1",
+  "dependencies": [],
+  "implements": [
+    { "id": "soksak-spec-sidecar-pty", "version": "0.0.1" }
+  ],
+  "consumes": [],
+  "entrypoints": [
+    { "role": "process", "name": "pty", "path": "dist/soksak-sidecar-pty" }
+  ]
+}
