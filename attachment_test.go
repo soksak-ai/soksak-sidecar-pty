@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	ptycontract "github.com/soksak/soksak-contract-pty"
+	ptycontract "github.com/soksak-ai/soksak-contract-pty"
 )
 
 func TestObserverOnlySessionNeverAppliesRendererBackpressure(t *testing.T) {

@@ -3,7 +3,7 @@ package main
 import (
 	"sort"
 
-	controlwire "github.com/soksak/soksak-contract-control"
+	controlwire "github.com/soksak-ai/soksak-contract-control"
 )
 
 // sortTable orders both lists by name.

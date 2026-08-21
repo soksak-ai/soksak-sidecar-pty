@@ -5,7 +5,7 @@ import (
 	"net"
 	"time"
 
-	ptycontract "github.com/soksak/soksak-contract-pty"
+	ptycontract "github.com/soksak-ai/soksak-contract-pty"
 )
 
 // After an attach, a connection carries raw bytes and takes no further request.

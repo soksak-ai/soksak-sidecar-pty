@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	ptycontract "github.com/soksak/soksak-contract-pty"
+	ptycontract "github.com/soksak-ai/soksak-contract-pty"
 )
 
 // ring is one session's output, held so a client that arrives late can still read what it missed.

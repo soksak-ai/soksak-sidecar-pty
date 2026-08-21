@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	ptycontract "github.com/soksak/soksak-contract-pty"
+	ptycontract "github.com/soksak-ai/soksak-contract-pty"
 )
 
 type sessionProcess interface {

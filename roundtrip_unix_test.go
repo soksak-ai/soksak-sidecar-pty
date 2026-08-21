@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	controlwire "github.com/soksak/soksak-contract-control"
-	ptycontract "github.com/soksak/soksak-contract-pty"
+	controlwire "github.com/soksak-ai/soksak-contract-control"
+	ptycontract "github.com/soksak-ai/soksak-contract-pty"
 )
 
 // A real shell runs, echoes what it was sent, and is gone when the daemon ends.

@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	controlwire "github.com/soksak/soksak-contract-control"
-	ptycontract "github.com/soksak/soksak-contract-pty"
+	controlwire "github.com/soksak-ai/soksak-contract-control"
+	ptycontract "github.com/soksak-ai/soksak-contract-pty"
 )
 
 // The control socket answers on the control envelope, not on a wire of its own.

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	ptycontract "github.com/soksak/soksak-contract-pty"
+	ptycontract "github.com/soksak-ai/soksak-contract-pty"
 )
 
 func TestLeasePreservesItsSourceCursorUntilConsumed(t *testing.T) {

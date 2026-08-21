@@ -24,8 +24,8 @@ import (
 	"path/filepath"
 	"syscall"
 
-	controlwire "github.com/soksak/soksak-contract-control"
-	ptycontract "github.com/soksak/soksak-contract-pty"
+	controlwire "github.com/soksak-ai/soksak-contract-control"
+	ptycontract "github.com/soksak-ai/soksak-contract-pty"
 )
 
 func main() {
