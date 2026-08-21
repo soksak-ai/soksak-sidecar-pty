@@ -2,13 +2,20 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
 	"sync"
 
-	"github.com/creack/pty"
 	ptycontract "github.com/soksak/soksak-contract-pty"
 )
+
+type sessionProcess interface {
+	Read([]byte) (int, error)
+	Write([]byte) (int, error)
+	Resize(cols, rows uint16) error
+	PID() uint32
+	Terminate() error
+	Wait() error
+	Close() error
+}
 
 // session is one shell with a tty, its output ring, and what the caller told this daemon about it.
 //
@@ -21,8 +28,7 @@ type session struct {
 	windowLabel string
 	generation  uint64
 
-	master         *os.File
-	cmd            *exec.Cmd
+	process        sessionProcess
 	ring           *ring
 	observers      map[*observer]struct{}
 	observerTokens map[string]*observer
@@ -77,12 +83,11 @@ func (reg *registry) openWithObserver(
 		return nil, fmt.Errorf("no shell was named and this daemon derives none")
 	}
 
-	command := exec.Command(shell, "-l")
-	command.Env = sessionEnvironment(request.Environment, request.EnvironmentDrop)
-	if request.CWD != "" {
-		command.Dir = request.CWD
-	}
-	master, err := pty.StartWithSize(command, &pty.Winsize{Cols: request.Cols, Rows: request.Rows})
+	process, err := startSessionProcess(
+		shell, request.CWD,
+		sessionEnvironment(request.Environment, request.EnvironmentDrop),
+		request.Cols, request.Rows,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("open a session for pane %s: %w", request.PaneID, err)
 	}
@@ -90,8 +95,9 @@ func (reg *registry) openWithObserver(
 	reg.mu.Lock()
 	if reg.stopped {
 		reg.mu.Unlock()
-		_ = master.Close()
-		terminateProcessGroup(command.Process.Pid)
+		_ = process.Terminate()
+		_ = process.Close()
+		_ = process.Wait()
 		return nil, fmt.Errorf("this daemon is shutting down")
 	}
 	reg.next++
@@ -101,8 +107,7 @@ func (reg *registry) openWithObserver(
 		paneID:         request.PaneID,
 		windowLabel:    request.WindowLabel,
 		generation:     reg.generation,
-		master:         master,
-		cmd:            command,
+		process:        process,
 		ring:           newRing(ptycontract.HighWatermark),
 		observers:      make(map[*observer]struct{}),
 		observerTokens: make(map[string]*observer),
@@ -133,7 +138,7 @@ func (reg *registry) openWithObserver(
 func (value *session) pump() {
 	buffer := make([]byte, 32*1024)
 	for {
-		count, err := value.master.Read(buffer)
+		count, err := value.process.Read(buffer)
 		if count > 0 {
 			value.mu.Lock()
 			from := value.written
@@ -201,7 +206,7 @@ func (value *session) write(data []byte) error {
 	if closed {
 		return fmt.Errorf("session %d has ended", value.id)
 	}
-	_, err := value.master.Write(data)
+	_, err := value.process.Write(data)
 	return err
 }
 
@@ -209,7 +214,7 @@ func (value *session) resize(cols, rows uint16) error {
 	if cols == 0 || rows == 0 {
 		return fmt.Errorf("a session cannot be sized to cols=%d rows=%d", cols, rows)
 	}
-	if err := pty.Setsize(value.master, &pty.Winsize{Cols: cols, Rows: rows}); err != nil {
+	if err := value.process.Resize(cols, rows); err != nil {
 		return err
 	}
 	value.mu.Lock()
@@ -299,13 +304,9 @@ func (value *session) reap() {
 	}
 	value.mu.Unlock()
 
-	if value.cmd != nil && value.cmd.Process != nil {
-		terminateProcessGroup(value.cmd.Process.Pid)
-	}
-	_ = value.master.Close()
-	if value.cmd != nil && value.cmd.Process != nil {
-		_, _ = value.cmd.Process.Wait()
-	}
+	_ = value.process.Terminate()
+	_ = value.process.Close()
+	_ = value.process.Wait()
 	value.ring.end()
 	select {
 	case value.resume <- struct{}{}:
@@ -361,10 +362,7 @@ func (reg *registry) list() []ptycontract.Info {
 		if label != "" {
 			window = &label
 		}
-		pid := uint32(0)
-		if value.cmd != nil && value.cmd.Process != nil {
-			pid = uint32(value.cmd.Process.Pid)
-		}
+		pid := value.process.PID()
 		value.mu.Lock()
 		written, paused := value.written, value.paused
 		value.mu.Unlock()

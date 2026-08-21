@@ -443,13 +443,9 @@ func (d *daemon) open(args map[string]json.RawMessage) (string, any, error) {
 }
 
 func opened(value *session, created bool) ptycontract.Opened {
-	pid := 0
-	if value.cmd != nil && value.cmd.Process != nil {
-		pid = value.cmd.Process.Pid
-	}
 	return ptycontract.Opened{
 		Session: value.id, PaneID: value.paneID, Generation: value.generation,
-		ShellPID: pid, Created: created,
+		ShellPID: int(value.process.PID()), Created: created,
 	}
 }
 

@@ -2,14 +2,49 @@
 
 package main
 
-import "syscall"
+import (
+	"os"
+	"os/exec"
+	"syscall"
+
+	"github.com/creack/pty"
+)
+
+type unixSessionProcess struct {
+	master *os.File
+	cmd    *exec.Cmd
+}
+
+func startSessionProcess(shell, cwd string, environment []string, cols, rows uint16) (sessionProcess, error) {
+	command := exec.Command(shell, "-l")
+	command.Env = environment
+	command.Dir = cwd
+	master, err := pty.StartWithSize(command, &pty.Winsize{Cols: cols, Rows: rows})
+	if err != nil {
+		return nil, err
+	}
+	return &unixSessionProcess{master: master, cmd: command}, nil
+}
+
+func (p *unixSessionProcess) Read(buffer []byte) (int, error) { return p.master.Read(buffer) }
+func (p *unixSessionProcess) Write(data []byte) (int, error)  { return p.master.Write(data) }
+func (p *unixSessionProcess) Resize(cols, rows uint16) error {
+	return pty.Setsize(p.master, &pty.Winsize{Cols: cols, Rows: rows})
+}
+func (p *unixSessionProcess) PID() uint32 { return uint32(p.cmd.Process.Pid) }
+func (p *unixSessionProcess) Terminate() error {
+	if p.cmd.Process.Pid > 0 {
+		return syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+	}
+	return nil
+}
+func (p *unixSessionProcess) Wait() error {
+	_, err := p.cmd.Process.Wait()
+	return err
+}
+func (p *unixSessionProcess) Close() error { return p.master.Close() }
 
 // terminateProcessGroup ends the shell and everything it started.
 //
 // The negative pid is the group. Signalling the shell alone leaves a build, a server or an editor
 // it started running with no terminal, no parent watching, and no way for anyone to find it again.
-func terminateProcessGroup(pid int) {
-	if pid > 0 {
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
-	}
-}
