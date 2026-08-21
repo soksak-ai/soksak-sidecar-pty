@@ -49,13 +49,8 @@ whatever launched it, so its own environment is a snapshot with no claim on a se
 - **Handoff.** The contract has a level for a live upgrade that preserves fds and ring coordinates.
   This build reports level 0 and refuses the operation by name. Claiming the level without the fd
   plan ends every shell on the first upgrade.
-- **Windows.** There is no session reaper and no ConPTY: a process group here needs a job object,
-  and a pty is a pseudoconsole rather than a master fd. `terminateProcessGroup` fails by name rather
-  than returning quietly, because an empty one made "the group was ended" and "this build cannot end
-  a group" the same answer.
-
-  `release/targets.json` still lists the two Windows triples. That is deliberate and it is a
-  statement about the build, not about the feature: the unit compiles there, and a target dropped
-  from the list is one nothing ever tries to compile — so the day the pseudoconsole is written,
-  nobody discovers it has been failing to build the whole time. What a build produces there is a
-  binary that starts, answers its greeting, and refuses to open a session by name.
+- **Windows release.** ConPTY, job ownership, resize, Unicode input/output, termination, and restore
+  must pass the Windows system suite before a Windows asset is published. Cross-compilation only
+  proves that the source compiles; it is not a release verdict. `release/targets.json` therefore
+  contains only the macOS and Linux targets that have passed their runtime suites. Windows compile
+  checks remain separate from the release matrix.

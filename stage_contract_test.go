@@ -1,12 +1,40 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestReleaseTargetsContainOnlyVerifiedRuntimePlatforms(t *testing.T) {
+	data, err := os.ReadFile("release/targets.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var targets []struct {
+		Target string `json:"target"`
+	}
+	if err := json.Unmarshal(data, &targets); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"aarch64-apple-darwin",
+		"aarch64-unknown-linux-gnu",
+		"x86_64-apple-darwin",
+		"x86_64-unknown-linux-gnu",
+	}
+	if len(targets) != len(want) {
+		t.Fatalf("release targets=%v, want %v", targets, want)
+	}
+	for index := range want {
+		if targets[index].Target != want[index] {
+			t.Fatalf("release target %d=%q, want %q", index, targets[index].Target, want[index])
+		}
+	}
+}
 
 func TestStageUsesTheDeclaredBuildDirectory(t *testing.T) {
 	script, err := os.ReadFile("stage.sh")
