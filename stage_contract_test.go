@@ -119,7 +119,11 @@ func TestStageBuildsTheOwnerRepositoryFromAnyWorkingDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	dist := filepath.Join(root, "dist")
-	cmd := exec.Command("/bin/sh", filepath.Join(repository, "stage.sh"), dist, "aarch64-unknown-linux-gnu")
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(shell, filepath.Join(repository, "stage.sh"), dist, "aarch64-unknown-linux-gnu")
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "SOKSAK_BUILD_DIR="+filepath.Join(root, "build"), "SOKSAK_TEST_GO_LOG="+log)
 	if output, err := cmd.CombinedOutput(); err != nil {
