@@ -26,6 +26,7 @@ func TestReleaseTargetsContainOnlyVerifiedRuntimePlatforms(t *testing.T) {
 		"aarch64-unknown-linux-gnu",
 		"x86_64-apple-darwin",
 		"x86_64-unknown-linux-gnu",
+		"x86_64-pc-windows-msvc",
 	}
 	if len(targets) != len(want) {
 		t.Fatalf("release targets=%v, want %v", targets, want)
@@ -64,6 +65,38 @@ func TestStageUsesTheDeclaredBuildDirectory(t *testing.T) {
 	}
 	if !strings.Contains(string(script), "${SOKSAK_BUILD_DIR:-target}") {
 		t.Fatal("stage.sh must write build output under SOKSAK_BUILD_DIR")
+	}
+}
+
+func TestStagePreservesTheWindowsExecutableExtension(t *testing.T) {
+	repository, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command := "#!/bin/sh\nset -eu\nwhile [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then shift; mkdir -p \"$(dirname \"$1\")\"; printf binary > \"$1\"; exit 0; fi; shift; done\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(command), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dist := filepath.Join(root, "dist")
+	cmd := exec.Command("/bin/sh", filepath.Join(repository, "stage.sh"), dist, "x86_64-pc-windows-msvc")
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "SOKSAK_BUILD_DIR="+filepath.Join(root, "build"))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("stage: %v\n%s", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(dist, "soksak-sidecar-pty.exe")); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(dist, "sidecar.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"process": "dist/soksak-sidecar-pty.exe"`) {
+		t.Fatalf("manifest = %s", body)
 	}
 }
 

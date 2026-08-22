@@ -23,8 +23,9 @@ jobs:
       - shell: bash
         run: |
           ./stage.sh package/dist x86_64-pc-windows-msvc
-          cp sidecar.json LICENSE package/
-          test -f package/dist/soksak-sidecar-pty
+          mv package/dist/sidecar.json package/sidecar.json
+          cp LICENSE package/
+          test -f package/dist/soksak-sidecar-pty.exe
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: windows-system-artifact

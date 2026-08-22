@@ -34,5 +34,17 @@ mkdir -p "$dist"
 temporary="$dist/.$name.tmp.$$"
 cp "$output" "$temporary"
 chmod +x "$temporary"
-mv -f "$temporary" "$dist/$name"
-printf 'staged: %s\n' "$dist/$name"
+staged="$name$extension"
+mv -f "$temporary" "$dist/$staged"
+cat > "$dist/sidecar.json" <<EOF
+{
+  "id": "soksak-sidecar-pty",
+  "version": "0.0.1",
+  "interface": {
+    "id": "soksak-spec-sidecar-pty",
+    "version": "0.0.1"
+  },
+  "process": "dist/$staged"
+}
+EOF
+printf 'staged: %s\n' "$dist/$staged"

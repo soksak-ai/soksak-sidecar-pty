@@ -30,7 +30,8 @@ func TestReleaseWorkflowUsesTheCanonicalImmutablePublisher(t *testing.T) {
 	for _, required := range []string{
 		"aarch64-apple-darwin", "aarch64-unknown-linux-gnu",
 		"x86_64-apple-darwin", "x86_64-unknown-linux-gnu",
-		"ref: 1673f33d2102f6ad168f28871d312301fd307371",
+		"x86_64-pc-windows-msvc",
+		"ref: 50993e5287a29e0d0a2f0cac096fa5ef12d06ea4",
 		"release-template/sidecar/build-release.mjs",
 		"release-template/sidecar/validate-with-spec.mjs",
 		"release-template/publish-canonical-release.mjs",
@@ -53,7 +54,7 @@ func TestWindowsSystemArtifactRunsConPTYBeforePackaging(t *testing.T) {
 	source := string(body)
 	for _, required := range []string{
 		"windows-2025", "go test -count=1 ./...", "go vet ./...",
-		"x86_64-pc-windows-msvc", "windows-system-artifact",
+		"x86_64-pc-windows-msvc", "windows-system-artifact", "soksak-sidecar-pty.exe",
 	} {
 		if !strings.Contains(source, required) {
 			t.Errorf("Windows system artifact workflow is missing %s", required)
