@@ -36,6 +36,26 @@ func TestReleaseTargetsContainOnlyVerifiedRuntimePlatforms(t *testing.T) {
 	}
 }
 
+func TestSidecarManifestUsesCanonicalFields(t *testing.T) {
+	body, err := os.ReadFile("sidecar.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest map[string]json.RawMessage
+	if err := json.Unmarshal(body, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"id": true, "version": true, "interface": true, "process": true}
+	if len(manifest) != len(want) {
+		t.Fatalf("manifest fields=%v", manifest)
+	}
+	for field := range manifest {
+		if !want[field] {
+			t.Fatalf("unsupported manifest field %q", field)
+		}
+	}
+}
+
 func TestStageUsesTheDeclaredBuildDirectory(t *testing.T) {
 	script, err := os.ReadFile("stage.sh")
 	if err != nil {
