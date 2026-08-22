@@ -1,0 +1,22 @@
+name: conpty-compare
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: diagnostics/conptycompare
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: diagnostics/conptycompare/go.sum
+      - run: go test -count=1 -v ./...
