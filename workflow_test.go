@@ -20,3 +20,27 @@ func TestNativeWorkflowRunsWindowsAndLinuxPTYTests(t *testing.T) {
 		}
 	}
 }
+
+func TestReleaseWorkflowUsesTheCanonicalImmutablePublisher(t *testing.T) {
+	body, err := os.ReadFile(".github/workflows/release.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	for _, required := range []string{
+		"aarch64-apple-darwin", "aarch64-unknown-linux-gnu",
+		"x86_64-apple-darwin", "x86_64-unknown-linux-gnu",
+		"ref: 1673f33d2102f6ad168f28871d312301fd307371",
+		"release-template/sidecar/build-release.mjs",
+		"release-template/sidecar/validate-with-spec.mjs",
+		"release-template/publish-canonical-release.mjs",
+		"owner-enforced immutable releases must be enabled",
+	} {
+		if !strings.Contains(source, required) {
+			t.Errorf("release workflow is missing %s", required)
+		}
+	}
+	if strings.Contains(source, "gh release create") {
+		t.Error("release workflow creates protected tags implicitly")
+	}
+}

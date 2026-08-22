@@ -1,0 +1,103 @@
+name: release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: "1.25.0"
+          cache: true
+      - run: go test -count=1 ./... && go vet ./...
+      - id: archive
+        shell: bash
+        run: |
+          ./stage.sh dist "${{ matrix.target }}"
+          archive="soksak-sidecar-pty-0.0.1-${{ matrix.target }}.tar.gz"
+          mkdir -p package/dist
+          cp sidecar.json LICENSE package/
+          cp dist/soksak-sidecar-pty package/dist/
+          tar -czf "$archive" -C package .
+          if command -v sha256sum >/dev/null 2>&1; then sha256sum "$archive" > "$archive.sha256"; else shasum -a 256 "$archive" > "$archive.sha256"; fi
+          echo "asset=$archive" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dist-${{ matrix.target }}
+          path: |
+            ${{ steps.archive.outputs.asset }}
+            ${{ steps.archive.outputs.asset }}.sha256
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: soksak-ai/soksak-spec
+          ref: 1673f33d2102f6ad168f28871d312301fd307371
+          path: .dependency/soksak-spec
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22.12.0"
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: "10.30.3"
+      - working-directory: .dependency/soksak-spec
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+      - run: node .dependency/soksak-spec/packages/plugin-spec/release-template/sidecar/build-release.mjs --commit "${{ github.sha }}" --tag v0.0.1 --artifacts dist --out dist-release
+      - run: node .dependency/soksak-spec/packages/plugin-spec/release-template/sidecar/validate-with-spec.mjs --spec-root .dependency/soksak-spec --release-dir dist-release
+      - run: |
+          mkdir publish-assets
+          find dist -maxdepth 1 -type f -name '*.tar.gz' -exec cp {} publish-assets/ \;
+          cp dist-release/*.json publish-assets/
+      - id: release-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ vars.SOKSAK_RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.SOKSAK_RELEASE_PRIVATE_KEY }}
+          permission-administration: read
+          permission-contents: write
+      - env:
+          SOKSAK_RELEASE_TOKEN: ${{ steps.release-token.outputs.token }}
+        run: |
+          test "$(gh api repos/${{ github.repository }}/immutable-releases --jq '.enabled and .enforced_by_owner')" = true || { echo "owner-enforced immutable releases must be enabled before tagging" >&2; exit 1; }
+          node .dependency/soksak-spec/packages/plugin-spec/release-template/publish-canonical-release.mjs --repository "${{ github.repository }}" --commit "${{ github.sha }}" --artifacts "$GITHUB_WORKSPACE/publish-assets" --manifest "$GITHUB_WORKSPACE/publish-assets/release.json"
