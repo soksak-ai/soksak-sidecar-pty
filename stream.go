@@ -88,7 +88,7 @@ func deliverObservations(conn net.Conn, observer *observer) {
 	for {
 		event := observer.next()
 		if event.Output != nil {
-			payload := make([]byte, 24+len(event.Output.Bytes))
+			payload := make([]byte, ptycontract.ObservationOutputMetadataBytes+len(event.Output.Bytes))
 			binary.BigEndian.PutUint64(payload[0:8], event.Output.EventSequence)
 			binary.BigEndian.PutUint64(payload[8:16], event.Output.FromSequence)
 			binary.BigEndian.PutUint64(payload[16:24], event.Output.ThroughSequence)
@@ -99,7 +99,7 @@ func deliverObservations(conn net.Conn, observer *observer) {
 			continue
 		}
 		if event.Gap != nil {
-			payload := make([]byte, 32)
+			payload := make([]byte, ptycontract.ObservationGapPayloadBytes)
 			binary.BigEndian.PutUint64(payload[0:8], event.Gap.FromEventSequence)
 			binary.BigEndian.PutUint64(payload[8:16], event.Gap.ThroughEventSequence)
 			binary.BigEndian.PutUint64(payload[16:24], event.Gap.FromSequence)
@@ -110,7 +110,7 @@ func deliverObservations(conn net.Conn, observer *observer) {
 			continue
 		}
 		if event.Resize != nil {
-			payload := make([]byte, 12)
+			payload := make([]byte, ptycontract.ObservationResizePayloadBytes)
 			binary.BigEndian.PutUint64(payload[0:8], event.Resize.EventSequence)
 			binary.BigEndian.PutUint16(payload[8:10], event.Resize.Cols)
 			binary.BigEndian.PutUint16(payload[10:12], event.Resize.Rows)
@@ -120,14 +120,14 @@ func deliverObservations(conn net.Conn, observer *observer) {
 			continue
 		}
 		if event.End != nil {
-			payload := make([]byte, 12)
+			payload := make([]byte, ptycontract.ObservationEndPayloadBytes)
 			binary.BigEndian.PutUint64(payload[0:8], event.End.EventSequence)
 			binary.BigEndian.PutUint32(payload[8:12], uint32(event.End.ExitCode))
 			writeObservationFrame(conn, ptycontract.ObservationFrameEnd, payload)
 			return
 		}
 		if event.Opened != nil {
-			payload := make([]byte, 32)
+			payload := make([]byte, ptycontract.ObservationOpenedPayloadBytes)
 			binary.BigEndian.PutUint64(payload[0:8], event.Opened.Session)
 			binary.BigEndian.PutUint64(payload[8:16], event.Opened.Generation)
 			binary.BigEndian.PutUint64(payload[16:24], event.Opened.EventSequence)
@@ -142,7 +142,7 @@ func deliverObservations(conn net.Conn, observer *observer) {
 }
 
 func writeObservationFrame(conn net.Conn, kind byte, payload []byte) bool {
-	header := [5]byte{kind}
+	header := [ptycontract.ObservationFrameHeaderBytes]byte{kind}
 	binary.BigEndian.PutUint32(header[1:], uint32(len(payload)))
 	if _, err := conn.Write(header[:]); err != nil {
 		return false

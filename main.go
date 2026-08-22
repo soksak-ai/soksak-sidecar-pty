@@ -1,6 +1,6 @@
 // soksak-sidecar-pty owns shells and moves bytes, and reads none of them.
 //
-// It is a unit somebody installs, not part of any application. That is the whole reason it is a
+// It is an installed sidecar, not part of any application. That is the whole reason it is a
 // process: a shell it started survives the application that asked for it, so closing a window or
 // upgrading the application does not end what is running in a pane.
 //
@@ -62,7 +62,7 @@ func run(home, runtimeRoot, shell string) error {
 		return err
 	}
 
-	d := &daemon{registry: newRegistry(shell), token: token, home: home, identity: ptycontract.UnitName}
+	d := &daemon{registry: newRegistry(shell), token: token, home: home, identity: ptycontract.SidecarName}
 
 	// One socket. A stream is a connection that stopped being request and response, not a second
 	// place — and a second address would be a second thing every peer derives, a second bind to get

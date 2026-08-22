@@ -22,9 +22,9 @@ import (
 // talk to this, with the same framing, the same correlation id and the same greeting.
 //
 // The commands are registered here and on nothing else. Nothing this daemon serves appears on the
-// application's registry: replacing this unit would otherwise change what the application answers,
-// two units driving one daemon would collide on the same names, and the permission that admitted a
-// call would have been granted to something no manifest declared.
+// application's registry: replacing this sidecar would otherwise change what the application
+// answers, two sidecars driving one daemon would collide on the same names, and the permission that
+// admitted a call would have been granted to something no manifest declared.
 
 type daemon struct {
 	registry         *registry
@@ -176,7 +176,7 @@ func (d *daemon) prepareObserver(args map[string]json.RawMessage) (string, any, 
 	}
 	d.pendingObservers[token] = &preparedObserver{request: request, observer: newObserver(ptycontract.ObserverBufferBytes)}
 	d.observerMu.Unlock()
-	time.AfterFunc(30*time.Second, func() {
+	time.AfterFunc(ptycontract.ObserverPreparationDurationMs*time.Millisecond, func() {
 		d.observerMu.Lock()
 		delete(d.pendingObservers, token)
 		d.observerMu.Unlock()
