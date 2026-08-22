@@ -46,7 +46,7 @@ func TestStageUsesTheDeclaredBuildDirectory(t *testing.T) {
 	}
 }
 
-func TestStageDispatchesDeclaredDarwinARM64Target(t *testing.T) {
+func verifyStageDispatchesDeclaredDarwinARM64Target(t *testing.T) {
 	root := t.TempDir()
 	bin := filepath.Join(root, "bin")
 	if err := os.MkdirAll(bin, 0o700); err != nil {

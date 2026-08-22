@@ -69,7 +69,7 @@ func startSessionProcess(shell, cwd string, environment []string, cols, rows uin
 	defer attributes.Delete()
 	if err := attributes.Update(
 		windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
-		unsafe.Pointer(&console), unsafe.Sizeof(console),
+		unsafe.Pointer(uintptr(console)), unsafe.Sizeof(console),
 	); err != nil {
 		windows.ClosePseudoConsole(console)
 		cleanupPipes()
