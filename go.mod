@@ -8,7 +8,3 @@ require (
 	github.com/soksak-ai/soksak-contract-pty v0.0.1
 	golang.org/x/sys v0.47.0
 )
-
-replace github.com/soksak-ai/soksak-contract-control => ../../soksak-contracts/soksak-contract-control
-
-replace github.com/soksak-ai/soksak-contract-pty => ../../soksak-contracts/soksak-contract-pty
