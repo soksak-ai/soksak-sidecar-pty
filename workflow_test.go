@@ -44,3 +44,19 @@ func TestReleaseWorkflowUsesTheCanonicalImmutablePublisher(t *testing.T) {
 		t.Error("release workflow creates protected tags implicitly")
 	}
 }
+
+func TestWindowsSystemArtifactRunsConPTYBeforePackaging(t *testing.T) {
+	body, err := os.ReadFile(".github/workflows/windows-system-artifact.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	for _, required := range []string{
+		"windows-2025", "go test -count=1 ./...", "go vet ./...",
+		"x86_64-pc-windows-msvc", "windows-system-artifact",
+	} {
+		if !strings.Contains(source, required) {
+			t.Errorf("Windows system artifact workflow is missing %s", required)
+		}
+	}
+}
