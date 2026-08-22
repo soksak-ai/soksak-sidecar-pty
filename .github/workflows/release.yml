@@ -41,7 +41,8 @@ jobs:
         shell: bash
         run: |
           ./stage.sh dist "${{ matrix.target }}"
-          archive="soksak-sidecar-pty-0.0.2-${{ matrix.target }}.tar.gz"
+          version="$(node -p 'require("./sidecar.json").version')"
+          archive="soksak-sidecar-pty-$version-${{ matrix.target }}.tar.gz"
           mkdir -p package/dist
           cp dist/sidecar.json LICENSE package/
           cp dist/soksak-sidecar-pty* package/dist/
@@ -72,7 +73,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: soksak-ai/soksak-spec
-          ref: fb6f53066b835e8a641f34d4aab8c4248d0f261d
+          ref: 418d6064fcdc5885be1ff73fd898fd7a0f778a0f
           path: .dependency/soksak-spec
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -85,7 +86,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm build
-      - run: node .dependency/soksak-spec/packages/plugin-spec/release-template/sidecar/build-release.mjs --commit "${{ github.sha }}" --tag v0.0.2 --artifacts dist --out dist-release
+      - run: node .dependency/soksak-spec/packages/plugin-spec/release-template/sidecar/build-release.mjs --commit "${{ github.sha }}" --tag "v$(node -p 'require("./sidecar.json").version')" --artifacts dist --out dist-release
       - run: node .dependency/soksak-spec/packages/plugin-spec/release-template/sidecar/validate-with-spec.mjs --spec-root .dependency/soksak-spec --release-dir dist-release
       - run: |
           mkdir publish-assets

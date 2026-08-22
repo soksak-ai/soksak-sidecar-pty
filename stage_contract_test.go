@@ -66,6 +66,12 @@ func TestStageUsesTheDeclaredBuildDirectory(t *testing.T) {
 	if !strings.Contains(string(script), "${SOKSAK_BUILD_DIR:-target}") {
 		t.Fatal("stage.sh must write build output under SOKSAK_BUILD_DIR")
 	}
+	if strings.Contains(string(script), "\"version\": \"0.0.") {
+		t.Fatal("stage.sh must not duplicate the sidecar version")
+	}
+	if !strings.Contains(string(script), "\"$repository/sidecar.json\"") {
+		t.Fatal("stage.sh must derive the staged manifest from sidecar.json")
+	}
 }
 
 func TestStagePreservesTheWindowsExecutableExtension(t *testing.T) {
