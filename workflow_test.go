@@ -21,6 +21,28 @@ func TestNativeWorkflowRunsWindowsAndLinuxPTYTests(t *testing.T) {
 	}
 }
 
+func TestEveryWorkflowUsesNode24CompatibleActions(t *testing.T) {
+	entries, err := os.ReadDir(".github/workflows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yml") {
+			continue
+		}
+		body, err := os.ReadFile(".github/workflows/" + entry.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := string(body)
+		for _, obsolete := range []string{"actions/checkout@11bd719", "actions/setup-go@40f1582", "actions/upload-artifact@ea165f8"} {
+			if strings.Contains(source, obsolete) {
+				t.Errorf("%s uses obsolete Action %s", entry.Name(), obsolete)
+			}
+		}
+	}
+}
+
 func TestReleaseWorkflowUsesTheCanonicalImmutablePublisher(t *testing.T) {
 	body, err := os.ReadFile(".github/workflows/release.yml")
 	if err != nil {
