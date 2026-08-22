@@ -35,6 +35,7 @@ func TestReleaseWorkflowUsesTheCanonicalImmutablePublisher(t *testing.T) {
 		"release-template/sidecar/build-release.mjs",
 		"release-template/sidecar/validate-with-spec.mjs",
 		"release-template/publish-canonical-release.mjs",
+		"GH_TOKEN: ${{ steps.release-token.outputs.token }}",
 		"owner-enforced immutable releases must be enabled",
 	} {
 		if !strings.Contains(source, required) {
