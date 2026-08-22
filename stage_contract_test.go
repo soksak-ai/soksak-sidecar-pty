@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -133,8 +134,15 @@ func TestStageBuildsTheOwnerRepositoryFromAnyWorkingDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "-C\n" + repository + "\nbuild\n"
-	if !strings.HasPrefix(string(body), want) || !strings.HasSuffix(string(body), ".\n") {
+	arguments := strings.Split(strings.TrimSpace(string(body)), "\n")
+	if len(arguments) < 4 || arguments[0] != "-C" || canonicalShellPath(arguments[1]) != filepath.Clean(repository) || arguments[2] != "build" || arguments[len(arguments)-1] != "." {
 		t.Fatalf("go arguments do not build from owner repository %q: %q", repository, body)
 	}
+}
+
+func canonicalShellPath(value string) string {
+	if runtime.GOOS == "windows" && len(value) >= 3 && value[0] == '/' && value[2] == '/' {
+		value = strings.ToUpper(value[1:2]) + ":" + value[2:]
+	}
+	return filepath.Clean(filepath.FromSlash(value))
 }
