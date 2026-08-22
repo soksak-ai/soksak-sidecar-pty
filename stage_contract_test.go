@@ -109,7 +109,8 @@ func TestStageBuildsTheOwnerRepositoryFromAnyWorkingDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(string(body), repository+"\n") {
-		t.Fatalf("go arguments do not end in owner repository %q: %q", repository, body)
+	want := "-C\n" + repository + "\nbuild\n"
+	if !strings.HasPrefix(string(body), want) || !strings.HasSuffix(string(body), ".\n") {
+		t.Fatalf("go arguments do not build from owner repository %q: %q", repository, body)
 	}
 }

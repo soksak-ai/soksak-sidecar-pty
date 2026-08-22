@@ -23,11 +23,11 @@ if [ -n "$target" ]; then
     *) echo "unsupported target: $target" >&2; exit 1 ;;
   esac
   mkdir -p "$(dirname "$output")"
-  GOOS="$target_os" GOARCH="$target_arch" go build -o "$output" "$repository"
+  GOOS="$target_os" GOARCH="$target_arch" go -C "$repository" build -o "$output" .
 else
   output="$build_dir/release/$name"
   mkdir -p "$(dirname "$output")"
-  go build -o "$output" "$repository"
+  go -C "$repository" build -o "$output" .
 fi
 
 mkdir -p "$dist"
