@@ -83,7 +83,11 @@ func TestStagePreservesTheWindowsExecutableExtension(t *testing.T) {
 		t.Fatal(err)
 	}
 	dist := filepath.Join(root, "dist")
-	cmd := exec.Command("/bin/sh", filepath.Join(repository, "stage.sh"), dist, "x86_64-pc-windows-msvc")
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(shell, filepath.Join(repository, "stage.sh"), dist, "x86_64-pc-windows-msvc")
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "SOKSAK_BUILD_DIR="+filepath.Join(root, "build"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("stage: %v\n%s", err, output)
