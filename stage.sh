@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 
+repository=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 dist=${1:-dist}
 name=soksak-sidecar-pty
 target=${2:-}
@@ -22,11 +23,11 @@ if [ -n "$target" ]; then
     *) echo "unsupported target: $target" >&2; exit 1 ;;
   esac
   mkdir -p "$(dirname "$output")"
-  GOOS="$target_os" GOARCH="$target_arch" go build -o "$output" .
+  GOOS="$target_os" GOARCH="$target_arch" go build -o "$output" "$repository"
 else
   output="$build_dir/release/$name"
   mkdir -p "$(dirname "$output")"
-  go build -o "$output" .
+  go build -o "$output" "$repository"
 fi
 
 mkdir -p "$dist"

@@ -82,3 +82,34 @@ func verifyStageDispatchesDeclaredDarwinARM64Target(t *testing.T) {
 		t.Fatalf("staged info=%v err=%v", info, err)
 	}
 }
+
+func TestStageBuildsTheOwnerRepositoryFromAnyWorkingDirectory(t *testing.T) {
+	repository, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(root, "go.log")
+	command := "#!/bin/sh\nset -eu\nprintf '%s\n' \"$@\" > \"$SOKSAK_TEST_GO_LOG\"\nwhile [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then shift; mkdir -p \"$(dirname \"$1\")\"; printf binary > \"$1\"; exit 0; fi; shift; done\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(command), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dist := filepath.Join(root, "dist")
+	cmd := exec.Command("/bin/sh", filepath.Join(repository, "stage.sh"), dist, "aarch64-unknown-linux-gnu")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "SOKSAK_BUILD_DIR="+filepath.Join(root, "build"), "SOKSAK_TEST_GO_LOG="+log)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("stage: %v\n%s", err, output)
+	}
+	body, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(string(body), repository+"\n") {
+		t.Fatalf("go arguments do not end in owner repository %q: %q", repository, body)
+	}
+}
