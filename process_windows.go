@@ -69,7 +69,7 @@ func startSessionProcess(shell, cwd string, environment []string, cols, rows uin
 	defer attributes.Delete()
 	if err := attributes.Update(
 		windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
-		unsafe.Pointer(uintptr(console)), unsafe.Sizeof(console),
+		*(*unsafe.Pointer)(unsafe.Pointer(&console)), unsafe.Sizeof(console),
 	); err != nil {
 		windows.ClosePseudoConsole(console)
 		cleanupPipes()
@@ -168,11 +168,8 @@ func startSessionProcess(shell, cwd string, environment []string, cols, rows uin
 }
 
 func windowsPipe() (windows.Handle, windows.Handle, error) {
-	security := windows.SecurityAttributes{
-		Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), InheritHandle: 1,
-	}
 	var read, write windows.Handle
-	if err := windows.CreatePipe(&read, &write, &security, 0); err != nil {
+	if err := windows.CreatePipe(&read, &write, nil, 0); err != nil {
 		return 0, 0, err
 	}
 	return read, write, nil
