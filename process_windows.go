@@ -123,14 +123,19 @@ func startSessionProcess(shell, cwd string, environment []string, cols, rows uin
 	}
 
 	startup := windows.StartupInfoEx{
-		StartupInfo:             windows.StartupInfo{Cb: uint32(unsafe.Sizeof(windows.StartupInfoEx{}))},
+		StartupInfo: windows.StartupInfo{
+			Cb:    uint32(unsafe.Sizeof(windows.StartupInfoEx{})),
+			Flags: windows.STARTF_USESTDHANDLES,
+		},
 		ProcThreadAttributeList: attributes.List(),
 	}
 	info := windows.ProcessInformation{}
+	processSecurity := windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{}))}
+	threadSecurity := windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{}))}
 	flags := uint32(windows.CREATE_DEFAULT_ERROR_MODE | windows.CREATE_UNICODE_ENVIRONMENT |
 		windows.EXTENDED_STARTUPINFO_PRESENT | windows.CREATE_SUSPENDED)
 	if err := windows.CreateProcess(
-		executable, commandLine, nil, nil, false, flags,
+		executable, commandLine, &processSecurity, &threadSecurity, false, flags,
 		&environmentBlock[0], directory, &startup.StartupInfo, &info,
 	); err != nil {
 		windows.CloseHandle(job)
