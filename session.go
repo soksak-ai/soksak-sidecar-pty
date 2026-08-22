@@ -44,6 +44,8 @@ type session struct {
 	// resume releases the reader when a paused client has acked back down to the low mark.
 	resume        chan struct{}
 	eventSequence uint64
+	cols          uint16
+	rows          uint16
 }
 
 type registry struct {
@@ -112,6 +114,8 @@ func (reg *registry) openWithObserver(
 		observers:      make(map[*observer]struct{}),
 		observerTokens: make(map[string]*observer),
 		resume:         make(chan struct{}, 1),
+		cols:           request.Cols,
+		rows:           request.Rows,
 	}
 	if prepared != nil {
 		value.observers[prepared.observer] = struct{}{}
@@ -238,6 +242,8 @@ func (value *session) resize(cols, rows uint16) error {
 	}
 	value.mu.Lock()
 	value.eventSequence++
+	value.cols = cols
+	value.rows = rows
 	event := ptycontract.ResizeObservation{EventSequence: value.eventSequence, Cols: cols, Rows: rows}
 	for observer := range value.observers {
 		observer.publishResize(event)
@@ -384,18 +390,22 @@ func (reg *registry) list() []ptycontract.Info {
 		pid := value.process.PID()
 		value.mu.Lock()
 		written, paused := value.written, value.paused
+		cols, rows, eventSequence := value.cols, value.rows, value.eventSequence
 		value.mu.Unlock()
 		acked, retained := value.ring.state()
 		out = append(out, ptycontract.Info{
-			Session:     value.id,
-			PaneID:      value.paneID,
-			ShellPID:    pid,
-			Generation:  value.generation,
-			WindowLabel: window,
-			Written:     written,
-			Acked:       acked,
-			Paused:      paused,
-			Retained:    retained,
+			Session:       value.id,
+			PaneID:        value.paneID,
+			ShellPID:      pid,
+			Generation:    value.generation,
+			WindowLabel:   window,
+			Written:       written,
+			Acked:         acked,
+			Paused:        paused,
+			Retained:      retained,
+			Cols:          cols,
+			Rows:          rows,
+			EventSequence: eventSequence,
 		})
 	}
 	return out

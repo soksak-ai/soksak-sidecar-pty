@@ -1,6 +1,6 @@
 {
   "id": "soksak-sidecar-pty",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "interface": {
     "id": "soksak-spec-sidecar-pty",
     "version": "0.0.1"

@@ -1,10 +1,24 @@
 package main
 
 import (
+	"io"
 	"testing"
 
 	ptycontract "github.com/soksak-ai/soksak-contract-pty"
 )
+
+type resizeProcess struct{ cols, rows uint16 }
+
+func (process *resizeProcess) Read([]byte) (int, error)       { return 0, io.EOF }
+func (process *resizeProcess) Write(data []byte) (int, error) { return len(data), nil }
+func (process *resizeProcess) Resize(cols, rows uint16) error {
+	process.cols, process.rows = cols, rows
+	return nil
+}
+func (*resizeProcess) PID() uint32      { return 1 }
+func (*resizeProcess) Terminate() error { return nil }
+func (*resizeProcess) Wait() error      { return nil }
+func (*resizeProcess) Close() error     { return nil }
 
 func TestObserverReceivesAbsoluteOutputRangesWithoutAffectingRendererAck(t *testing.T) {
 	observer := newObserver(64)
@@ -87,5 +101,26 @@ func TestPreparedObserverReceivesOpenedBeforeOutput(t *testing.T) {
 	second := observer.next()
 	if second.Output == nil || string(second.Output.Bytes) != "x" {
 		t.Fatalf("second event = %#v", second)
+	}
+}
+
+func TestSessionStatusReportsInitialAndAppliedSizes(t *testing.T) {
+	process := &resizeProcess{cols: 80, rows: 24}
+	value := &session{
+		id: 7, paneID: "pane", generation: 1, process: process, ring: newRing(16),
+		observers: make(map[*observer]struct{}), resume: make(chan struct{}, 1),
+		cols: 80, rows: 24,
+	}
+	registry := &registry{sessions: map[uint64]*session{7: value}}
+	initial := registry.list()[0]
+	if initial.Cols != 80 || initial.Rows != 24 || initial.EventSequence != 0 {
+		t.Fatalf("initial status = %+v", initial)
+	}
+	if err := value.resize(54, 20); err != nil {
+		t.Fatal(err)
+	}
+	applied := registry.list()[0]
+	if applied.Cols != 54 || applied.Rows != 20 || applied.EventSequence != 1 {
+		t.Fatalf("applied status = %+v", applied)
 	}
 }

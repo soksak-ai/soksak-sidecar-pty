@@ -13,6 +13,7 @@ a process and not a library.
 Everything downstream of that follows: the ring holds what a shell printed while nobody was
 attached, `fromSeq` is how a client that comes back says where it got to, and the flow-control
 watermarks bound what one unattended session can cost.
+Status reports the last size successfully applied to each PTY and its source event sequence.
 
 ## What it does not do
 
@@ -49,8 +50,6 @@ whatever launched it, so its own environment is a snapshot with no claim on a se
 - **Handoff.** The contract has a level for a live upgrade that preserves fds and ring coordinates.
   This build reports level 0 and refuses the operation by name. Claiming the level without the fd
   plan ends every shell on the first upgrade.
-- **Windows release.** ConPTY, job ownership, resize, Unicode input/output, termination, and restore
-  must pass the Windows system suite before a Windows asset is published. Cross-compilation only
-  proves that the source compiles; it is not a release verdict. `release/targets.json` therefore
-  contains only the macOS and Linux targets that have passed their runtime suites. Windows compile
-  checks remain separate from the release matrix.
+- **No implicit migration.** A release publishes only the targets declared in
+  `release/targets.json`. ConPTY behavior is verified by the Windows owner tests and the installed
+  terminal system suite; cross-compilation alone is not a runtime verdict.
