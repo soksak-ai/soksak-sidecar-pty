@@ -1,0 +1,31 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: windows-2025, os: windows }
+          - { runner: ubuntu-24.04, os: linux }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: "1.25.0"
+          cache: true
+      - name: Verify native PTY runtime
+        run: go test -count=1 ./...
+      - name: Vet native PTY source
+        run: go vet ./...
