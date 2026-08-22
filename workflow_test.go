@@ -62,3 +62,23 @@ func TestWindowsSystemArtifactRunsConPTYBeforePackaging(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowsListenerUsesTheNamedPipeTransport(t *testing.T) {
+	body, err := os.ReadFile("listen_windows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	for _, required := range []string{"winio.ListenPipe", "SecurityDescriptor", "GetCurrentProcessToken"} {
+		if !strings.Contains(source, required) {
+			t.Errorf("Windows listener is missing %s", required)
+		}
+	}
+	mainSource, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(mainSource), "ControlSocketPath(runtimeRoot") != 1 {
+		t.Fatal("PTY daemon derives its control address more than once")
+	}
+}

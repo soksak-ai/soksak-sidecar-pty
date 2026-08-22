@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 
 	controlwire "github.com/soksak-ai/soksak-contract-control"
@@ -67,7 +68,8 @@ func run(home, runtimeRoot, shell string) error {
 	// One socket. A stream is a connection that stopped being request and response, not a second
 	// place — and a second address would be a second thing every peer derives, a second bind to get
 	// right, and a state where one is up and the other is not.
-	control, err := listen(ptycontract.ControlSocketPath(runtimeRoot))
+	controlAddress := ptycontract.ControlSocketPath(runtimeRoot, runtime.GOOS == "windows")
+	control, err := listen(controlAddress)
 	if err != nil {
 		return err
 	}
@@ -82,7 +84,7 @@ func run(home, runtimeRoot, shell string) error {
 	// daemon and is the only one that needs to be told. Every other peer derives the token's path
 	// from the home, which is what the file is for.
 	announcement, err := json.Marshal(
-		controlwire.NewAnnouncement(ptycontract.ControlSocketPath(runtimeRoot)).WithToken(token))
+		controlwire.NewAnnouncement(controlAddress).WithToken(token))
 	if err != nil {
 		return err
 	}
@@ -111,54 +113,6 @@ func accept(listener net.Listener, serve func(net.Conn)) {
 		}
 		go serve(conn)
 	}
-}
-
-// listen binds a unix socket, refusing an address another daemon is on and clearing one a dead daemon left.
-//
-// This is why a socket file is not a readiness signal either: the path exists in both cases, and
-// telling them apart takes a connect.
-func listen(path string) (net.Listener, error) {
-	// Whether anyone is there is asked before the path is cleared.
-	//
-	// Removing first and binding second takes the address away from a daemon that is still serving:
-	// it keeps its listening socket, nothing can reach it any more, and the shells it holds become
-	// unreachable while a second daemon answers where they used to be. Both run and only one is
-	// findable.
-	//
-	// A connect is what separates the two cases. A path exists both when someone is listening and
-	// when a dead daemon left it behind, so a stat cannot tell them apart and this can.
-	if conn, err := net.Dial("unix", path); err == nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf(
-			"another daemon is already listening at %s\n"+
-				"It holds this home's shells. Reach that one rather than starting a second: two "+
-				"daemons on one home means the sessions of whichever loses the address are lost to "+
-				"everything that could have found them",
-			path)
-	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("clearing %s: %w", path, err)
-	}
-	// The length is checked before the bind, because the bind does not say so.
-	//
-	// A unix socket path goes into a fixed-size struct, and over the limit the kernel answers
-	// "invalid argument" — a sentence that names neither the path nor the limit, and that reads like
-	// a bug in the caller's arguments rather than like a home whose name is long. Measured
-	// 2026-08-20 on this platform: a home under the temporary directory produced exactly that.
-	if len(path) > socketPathLimit {
-		return nil, fmt.Errorf("the socket path is %d bytes and this platform accepts %d: %s\n"+
-			"Every socket derives from the runtime root, so declare a shorter runtime root",
-			len(path), socketPathLimit, path)
-	}
-	listener, err := net.Listen("unix", path)
-	if err != nil {
-		return nil, fmt.Errorf("binding %s: %w", path, err)
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		_ = listener.Close()
-		return nil, fmt.Errorf("restricting %s: %w", path, err)
-	}
-	return listener, nil
 }
 
 // loadOrCreateToken reads the shared secret the greeting checks, creating it once.

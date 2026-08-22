@@ -39,7 +39,7 @@ mv -f "$temporary" "$dist/$staged"
 cat > "$dist/sidecar.json" <<EOF
 {
   "id": "soksak-sidecar-pty",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "interface": {
     "id": "soksak-spec-sidecar-pty",
     "version": "0.0.1"

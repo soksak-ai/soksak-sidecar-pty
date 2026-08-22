@@ -73,8 +73,8 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 	if announced.Protocol == nil || *announced.Protocol != controlwire.Protocol {
 		t.Fatalf("the announcement names protocol %v, this build speaks %d", announced.Protocol, controlwire.Protocol)
 	}
-	if announced.Socket == nil || *announced.Socket != ptycontract.ControlSocketPath(runtimeRoot) {
-		t.Fatalf("the announcement names %v, the contract derives %q", announced.Socket, ptycontract.ControlSocketPath(runtimeRoot))
+	if announced.Socket == nil || *announced.Socket != ptycontract.ControlSocketPath(runtimeRoot, false) {
+		t.Fatalf("the announcement names %v, the contract derives %q", announced.Socket, ptycontract.ControlSocketPath(runtimeRoot, false))
 	}
 
 	token, err := os.ReadFile(ptycontract.TokenPath(runtimeRoot))

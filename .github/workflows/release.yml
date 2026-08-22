@@ -41,7 +41,7 @@ jobs:
         shell: bash
         run: |
           ./stage.sh dist "${{ matrix.target }}"
-          archive="soksak-sidecar-pty-0.0.1-${{ matrix.target }}.tar.gz"
+          archive="soksak-sidecar-pty-0.0.2-${{ matrix.target }}.tar.gz"
           mkdir -p package/dist
           cp dist/sidecar.json LICENSE package/
           cp dist/soksak-sidecar-pty* package/dist/
@@ -85,7 +85,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm build
-      - run: node .dependency/soksak-spec/packages/plugin-spec/release-template/sidecar/build-release.mjs --commit "${{ github.sha }}" --tag v0.0.1 --artifacts dist --out dist-release
+      - run: node .dependency/soksak-spec/packages/plugin-spec/release-template/sidecar/build-release.mjs --commit "${{ github.sha }}" --tag v0.0.2 --artifacts dist --out dist-release
       - run: node .dependency/soksak-spec/packages/plugin-spec/release-template/sidecar/validate-with-spec.mjs --spec-root .dependency/soksak-spec --release-dir dist-release
       - run: |
           mkdir publish-assets
