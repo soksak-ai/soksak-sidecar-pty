@@ -31,7 +31,7 @@ func TestReleaseWorkflowUsesTheCanonicalImmutablePublisher(t *testing.T) {
 		"aarch64-apple-darwin", "aarch64-unknown-linux-gnu",
 		"x86_64-apple-darwin", "x86_64-unknown-linux-gnu",
 		"x86_64-pc-windows-msvc",
-		"ref: 50993e5287a29e0d0a2f0cac096fa5ef12d06ea4",
+		"ref: fb6f53066b835e8a641f34d4aab8c4248d0f261d",
 		"release-template/sidecar/build-release.mjs",
 		"release-template/sidecar/validate-with-spec.mjs",
 		"release-template/publish-canonical-release.mjs",
