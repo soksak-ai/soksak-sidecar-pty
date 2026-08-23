@@ -46,7 +46,7 @@ jobs:
           mkdir -p package/dist
           cp dist/sidecar.json LICENSE package/
           cp dist/soksak-sidecar-pty* package/dist/
-          tar -czf "$archive" -C package .
+          tar -czf "$archive" -C package LICENSE sidecar.json dist
           if command -v sha256sum >/dev/null 2>&1; then sha256sum "$archive" > "$archive.sha256"; else shasum -a 256 "$archive" > "$archive.sha256"; fi
           echo "asset=$archive" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
