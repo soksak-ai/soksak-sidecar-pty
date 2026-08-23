@@ -53,7 +53,10 @@ func TestReleaseWorkflowUsesTheCanonicalImmutablePublisher(t *testing.T) {
 		"aarch64-apple-darwin", "aarch64-unknown-linux-gnu",
 		"x86_64-apple-darwin", "x86_64-unknown-linux-gnu",
 		"x86_64-pc-windows-msvc",
-		"ref: 418d6064fcdc5885be1ff73fd898fd7a0f778a0f",
+		"https://github.com/soksak-ai/soksak-spec/releases/download/v0.0.19/soksak-ai-plugin-spec-0.0.19.tgz",
+		"928c0e6cc12d5500bedd386c1807003bf7c3dd34eed836b4a978d8b16d9e5b7b",
+		"node-version: \"26.7.0\"",
+		"--spec-package .dependency/spec-package",
 		"require(\"./sidecar.json\").version",
 		"release-template/sidecar/build-release.mjs",
 		"release-template/sidecar/validate-with-spec.mjs",
@@ -68,6 +71,9 @@ func TestReleaseWorkflowUsesTheCanonicalImmutablePublisher(t *testing.T) {
 	}
 	if strings.Contains(source, "gh release create") {
 		t.Error("release workflow creates protected tags implicitly")
+	}
+	if strings.Contains(source, "repository: soksak-ai/soksak-spec") || strings.Contains(source, "pnpm/action-setup") {
+		t.Error("release workflow rebuilds the spec source instead of using its immutable package")
 	}
 }
 

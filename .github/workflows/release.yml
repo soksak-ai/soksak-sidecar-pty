@@ -70,24 +70,18 @@ jobs:
           pattern: dist-*
           path: dist
           merge-multiple: true
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: soksak-ai/soksak-spec
-          ref: 418d6064fcdc5885be1ff73fd898fd7a0f778a0f
-          path: .dependency/soksak-spec
-          persist-credentials: false
+      - name: Install the immutable public spec package
+        run: |
+          mkdir -p .dependency/spec-package
+          curl -fsSL https://github.com/soksak-ai/soksak-spec/releases/download/v0.0.19/soksak-ai-plugin-spec-0.0.19.tgz -o .dependency/soksak-spec.tgz
+          echo "928c0e6cc12d5500bedd386c1807003bf7c3dd34eed836b4a978d8b16d9e5b7b  .dependency/soksak-spec.tgz" | sha256sum -c -
+          tar -xzf .dependency/soksak-spec.tgz -C .dependency/spec-package --strip-components=1
+          test -z "$(find .dependency/spec-package -type l -print -quit)"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: "24.19.0"
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
-        with:
-          version: "10.30.3"
-      - working-directory: .dependency/soksak-spec
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm build
-      - run: node .dependency/soksak-spec/packages/plugin-spec/release-template/sidecar/build-release.mjs --commit "${{ github.sha }}" --tag "v$(node -p 'require("./sidecar.json").version')" --artifacts dist --out dist-release
-      - run: node .dependency/soksak-spec/packages/plugin-spec/release-template/sidecar/validate-with-spec.mjs --spec-root .dependency/soksak-spec --release-dir dist-release
+          node-version: "26.7.0"
+      - run: node .dependency/spec-package/release-template/sidecar/build-release.mjs --commit "${{ github.sha }}" --tag "v$(node -p 'require("./sidecar.json").version')" --artifacts dist --out dist-release
+      - run: node .dependency/spec-package/release-template/sidecar/validate-with-spec.mjs --spec-package .dependency/spec-package --release-dir dist-release
       - run: |
           mkdir publish-assets
           find dist -maxdepth 1 -type f -name '*.tar.gz' -exec cp {} publish-assets/ \;
@@ -104,4 +98,4 @@ jobs:
           GH_TOKEN: ${{ steps.release-token.outputs.token }}
         run: |
           test "$(gh api repos/${{ github.repository }}/immutable-releases --jq '.enabled and .enforced_by_owner')" = true || { echo "owner-enforced immutable releases must be enabled before tagging" >&2; exit 1; }
-          node .dependency/soksak-spec/packages/plugin-spec/release-template/publish-canonical-release.mjs --repository "${{ github.repository }}" --commit "${{ github.sha }}" --artifacts "$GITHUB_WORKSPACE/publish-assets" --manifest "$GITHUB_WORKSPACE/publish-assets/release.json"
+          node .dependency/spec-package/release-template/publish-canonical-release.mjs --repository "${{ github.repository }}" --commit "${{ github.sha }}" --artifacts "$GITHUB_WORKSPACE/publish-assets" --manifest "$GITHUB_WORKSPACE/publish-assets/release.json"
