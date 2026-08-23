@@ -1,6 +1,6 @@
 module github.com/soksak-ai/soksak-sidecar-pty
 
-go 1.25.0
+go 1.26.3
 
 require (
 	github.com/creack/pty v1.1.24
