@@ -60,6 +60,7 @@ func TestReleaseWorkflowUsesTheCanonicalImmutablePublisher(t *testing.T) {
 		"release-template/publish-canonical-release.mjs",
 		"GH_TOKEN: ${{ steps.release-token.outputs.token }}",
 		"owner-enforced immutable releases must be enabled",
+		"go-version-file: go.mod",
 	} {
 		if !strings.Contains(source, required) {
 			t.Errorf("release workflow is missing %s", required)
