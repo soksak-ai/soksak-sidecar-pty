@@ -52,3 +52,29 @@ func TestSnapshotLeaseReplacesThePreviousRendererGeneration(t *testing.T) {
 		t.Fatal("replacement renderer remained attached after its detach")
 	}
 }
+
+func TestExplicitDetachAllowsReplacementWithoutStaleStreamClearingIt(t *testing.T) {
+	value := &session{ring: newRing(ptycontract.HighWatermark), resume: make(chan struct{}, 1)}
+	first, err := value.attachRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !value.detachActiveRenderer() {
+		t.Fatal("active renderer was not detached")
+	}
+	second, err := value.attachRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == first {
+		t.Fatal("replacement renderer reused the stale generation")
+	}
+	value.detachRenderer(first)
+	if !value.rendererIsAttached() {
+		t.Fatal("stale stream detach removed the replacement renderer")
+	}
+	value.detachRenderer(second)
+	if value.rendererIsAttached() {
+		t.Fatal("replacement renderer remained attached")
+	}
+}

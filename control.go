@@ -58,8 +58,23 @@ func (d *daemon) commands() map[string]handler {
 		ptycontract.CommandCloseWindow:     d.closeWindow,
 		ptycontract.CommandStatus:          d.status,
 		ptycontract.CommandLease:           d.lease,
+		ptycontract.CommandDetachRenderer:  d.detachRenderer,
 		ptycontract.CommandPrepareObserver: d.prepareObserver,
 	}
+}
+
+func (d *daemon) detachRenderer(args map[string]json.RawMessage) (string, any, error) {
+	request, err := decode[ptycontract.Session](args)
+	if err != nil {
+		return "ARGUMENT", nil, err
+	}
+	value, err := d.registry.get(request.Session)
+	if err != nil {
+		return "NO_SESSION", nil, err
+	}
+	return "", ptycontract.DetachedRenderer{
+		Session: request.Session, Detached: value.detachActiveRenderer(),
+	}, nil
 }
 
 // unserved is what this daemon declares and refuses, with the reason.

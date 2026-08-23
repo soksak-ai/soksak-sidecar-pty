@@ -41,6 +41,7 @@ type session struct {
 	// one rule are two answers waiting to disagree.
 	paused             bool
 	rendererGeneration uint64
+	rendererAttached   bool
 	// resume releases the reader when a paused client has acked back down to the low mark.
 	resume        chan struct{}
 	eventSequence uint64
@@ -179,10 +180,14 @@ func (value *session) pump() {
 func (value *session) attachRenderer() (uint64, error) {
 	value.mu.Lock()
 	defer value.mu.Unlock()
-	if value.rendererGeneration != 0 {
+	if value.rendererAttached {
 		return 0, fmt.Errorf("session %d already has an attached renderer", value.id)
 	}
-	value.rendererGeneration = 1
+	value.rendererGeneration++
+	if value.rendererGeneration == 0 {
+		value.rendererGeneration = 1
+	}
+	value.rendererAttached = true
 	return value.rendererGeneration, nil
 }
 
@@ -193,14 +198,15 @@ func (value *session) replaceRenderer() uint64 {
 		value.rendererGeneration = 1
 	}
 	generation := value.rendererGeneration
+	value.rendererAttached = true
 	value.mu.Unlock()
 	return generation
 }
 
 func (value *session) detachRenderer(generation uint64) {
 	value.mu.Lock()
-	if value.rendererGeneration == generation {
-		value.rendererGeneration = 0
+	if value.rendererAttached && value.rendererGeneration == generation {
+		value.rendererAttached = false
 	}
 	value.mu.Unlock()
 	select {
@@ -209,15 +215,29 @@ func (value *session) detachRenderer(generation uint64) {
 	}
 }
 
+func (value *session) detachActiveRenderer() bool {
+	value.mu.Lock()
+	detached := value.rendererAttached
+	value.rendererAttached = false
+	value.mu.Unlock()
+	if detached {
+		select {
+		case value.resume <- struct{}{}:
+		default:
+		}
+	}
+	return detached
+}
+
 func (value *session) rendererIsAttached() bool {
 	value.mu.Lock()
 	defer value.mu.Unlock()
-	return value.rendererGeneration != 0
+	return value.rendererAttached
 }
 
 func (value *session) shouldPause(written uint64) bool {
 	value.mu.Lock()
-	attached := value.rendererGeneration != 0
+	attached := value.rendererAttached
 	value.mu.Unlock()
 	return attached && value.ring.paused(written)
 }

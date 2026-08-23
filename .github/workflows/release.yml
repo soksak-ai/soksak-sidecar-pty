@@ -73,13 +73,13 @@ jobs:
       - name: Install the immutable public spec package
         run: |
           mkdir -p .dependency/spec-package
-          curl -fsSL https://github.com/soksak-ai/soksak-spec/releases/download/v0.0.19/soksak-ai-plugin-spec-0.0.19.tgz -o .dependency/soksak-spec.tgz
-          echo "928c0e6cc12d5500bedd386c1807003bf7c3dd34eed836b4a978d8b16d9e5b7b  .dependency/soksak-spec.tgz" | sha256sum -c -
+          curl -fsSL https://github.com/soksak-ai/soksak-spec/releases/download/v0.0.29/soksak-ai-plugin-spec-0.0.29.tgz -o .dependency/soksak-spec.tgz
+          echo "f3311f6e20069667486e753e8669e7f7787f197f47e4a94e14207a066c2db32c  .dependency/soksak-spec.tgz" | sha256sum -c -
           tar -xzf .dependency/soksak-spec.tgz -C .dependency/spec-package --strip-components=1
           test -z "$(find .dependency/spec-package -type l -print -quit)"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: "26.7.0"
+          node-version-file: .dependency/spec-package/package.json
       - run: node .dependency/spec-package/release-template/sidecar/build-release.mjs --commit "${{ github.sha }}" --tag "v$(node -p 'require("./sidecar.json").version')" --artifacts dist --out dist-release
       - run: node .dependency/spec-package/release-template/sidecar/validate-with-spec.mjs --spec-package .dependency/spec-package --release-dir dist-release
       - run: |
