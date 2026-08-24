@@ -41,6 +41,18 @@ func (value *observer) publishOutput(output ptycontract.OutputObservation) {
 	}
 	if value.queued+len(output.Bytes) <= value.capacity {
 		output.Bytes = append([]byte(nil), output.Bytes...)
+		if len(value.events) > 0 {
+			last := value.events[len(value.events)-1].Output
+			if last != nil && last.EventSequence+1 == output.EventSequence &&
+				last.ThroughSequence == output.FromSequence {
+				last.EventSequence = output.EventSequence
+				last.ThroughSequence = output.ThroughSequence
+				last.Bytes = append(last.Bytes, output.Bytes...)
+				value.queued += len(output.Bytes)
+				value.ready.Signal()
+				return
+			}
+		}
 		value.events = append(value.events, observation{Output: &output})
 		value.queued += len(output.Bytes)
 		value.ready.Signal()
