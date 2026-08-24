@@ -27,3 +27,20 @@ escape sequence, 화면, scrollback grid, prompt를 해석하지 않습니다. �
 - release는 `release/targets.json`에 선언된 target만 게시합니다. ConPTY는 Windows owner
   tests와 설치된 terminal system suite로 검증하며 cross-build만으로 runtime 성공을
   주장하지 않습니다.
+
+## 빌드 계약
+
+Go 버전 정본은 `go.mod` 하나이고, 공개 target 정본은 `release/targets.json` 하나입니다. Make
+공개 진입점에는 native target을 명시해야 합니다. 실제 Go runtime이 target과 다르면 dependency
+준비나 컴파일 전에 exit 78로 거부합니다.
+
+```sh
+make verify TARGET=aarch64-apple-darwin
+make stage TARGET=aarch64-apple-darwin OUT=dist
+```
+
+`build`는 `target/<target>/release/soksak-sidecar-pty[.exe]`만 만듭니다. `stage`는 컴파일하지
+않고 선언된 산출물만 복사하며, 반복 실행에서 기존 파일과 byte가 다르면 실패합니다. 릴리스
+Actions도 `go.mod`에서 toolchain을 설치한 뒤 모든 target에 같은 Make 명령을 실행합니다.
+immutable spec validator는 source checkout이나 sibling 경로가 아니라 release train이 전달한
+URL과 SHA-256으로만 주입합니다.

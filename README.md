@@ -53,3 +53,20 @@ whatever launched it, so its own environment is a snapshot with no claim on a se
 - **No implicit migration.** A release publishes only the targets declared in
   `release/targets.json`. ConPTY behavior is verified by the Windows owner tests and the installed
   terminal system suite; cross-compilation alone is not a runtime verdict.
+
+## Build contract
+
+`go.mod` is the only Go-version owner, and `release/targets.json` is the only published-target
+owner. The Make entrypoint requires one explicit native target and rejects a mismatched Go runtime
+with exit 78 before dependency materialization or compilation.
+
+```sh
+make verify TARGET=aarch64-apple-darwin
+make stage TARGET=aarch64-apple-darwin OUT=dist
+```
+
+`build` writes only `target/<target>/release/soksak-sidecar-pty[.exe]`. `stage` never compiles; it
+copies that declared artifact and rejects a byte conflict on a repeated invocation. Release Actions
+install the toolchain from `go.mod` and invoke these same Make commands for every target. The
+immutable spec validator is supplied by release-train URL and SHA-256 inputs rather than a source
+checkout or a repository-relative dependency path.
