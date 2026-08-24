@@ -12,8 +12,13 @@ func TestMakeOwnsEveryPTYBuildEntrypoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := string(body)
+	resolver, err := os.ReadFile("scripts/resolve-target.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildContract := source + string(resolver)
 	for _, target := range []string{"preflight:", "prepare:", "build:", "stage:", "verify:"} {
-		if !strings.Contains(source, target) {
+		if !strings.Contains(buildContract, target) {
 			t.Errorf("Makefile omits %s", target)
 		}
 	}
@@ -22,7 +27,7 @@ func TestMakeOwnsEveryPTYBuildEntrypoint(t *testing.T) {
 		"aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu",
 		"x86_64-pc-windows-msvc",
 	} {
-		if !strings.Contains(source, target) {
+		if !strings.Contains(buildContract, target) {
 			t.Errorf("Makefile omits %s", target)
 		}
 	}

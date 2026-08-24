@@ -16,13 +16,16 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: "1.25.0"
+          go-version-file: go.mod
           cache: true
       - shell: bash
-        run: go test -count=1 ./... && go vet ./...
+        run: choco install make --version=4.4.1 --no-progress --yes
+      - shell: bash
+        run: make verify TARGET=x86_64-pc-windows-msvc
       - shell: bash
         run: |
-          ./stage.sh package/dist x86_64-pc-windows-msvc
+          make stage TARGET=x86_64-pc-windows-msvc OUT=package/dist
+          make stage TARGET=x86_64-pc-windows-msvc OUT=package/dist
           mv package/dist/sidecar.json package/sidecar.json
           cp LICENSE package/
           test -f package/dist/soksak-sidecar-pty.exe

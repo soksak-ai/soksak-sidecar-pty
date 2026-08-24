@@ -13,7 +13,8 @@ func TestNativeWorkflowRunsWindowsAndLinuxPTYTests(t *testing.T) {
 	}
 	source := string(body)
 	for _, required := range []string{
-		"windows-2025", "ubuntu-24.04", "go test -count=1 ./...", "go vet ./...",
+		"windows-2025", "ubuntu-24.04", "x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu",
+		"go-version-file: go.mod", "make verify TARGET=\"${{ matrix.target }}\"",
 	} {
 		if !strings.Contains(source, required) {
 			t.Errorf("native workflow is missing %s", required)
@@ -53,11 +54,13 @@ func TestReleaseWorkflowUsesTheCanonicalImmutablePublisher(t *testing.T) {
 		"aarch64-apple-darwin", "aarch64-unknown-linux-gnu",
 		"x86_64-apple-darwin", "x86_64-unknown-linux-gnu",
 		"x86_64-pc-windows-msvc",
-		"https://github.com/soksak-ai/soksak-spec/releases/download/v0.0.29/soksak-ai-plugin-spec-0.0.29.tgz",
-		"f3311f6e20069667486e753e8669e7f7787f197f47e4a94e14207a066c2db32c",
+		"spec_url:", "spec_sha256:",
 		"node-version-file: .dependency/spec-package/package.json",
 		"--spec-package .dependency/spec-package",
 		"require(\"./sidecar.json\").version",
+		"make verify TARGET=\"${{ matrix.target }}\"",
+		"make stage TARGET=\"${{ matrix.target }}\" OUT=dist",
+		"release-template/sidecar/pack-target.mjs",
 		"release-template/sidecar/build-release.mjs",
 		"release-template/sidecar/validate-with-spec.mjs",
 		"release-template/publish-canonical-release.mjs",
@@ -84,7 +87,8 @@ func TestWindowsSystemArtifactRunsConPTYBeforePackaging(t *testing.T) {
 	}
 	source := string(body)
 	for _, required := range []string{
-		"windows-2025", "go test -count=1 ./...", "go vet ./...",
+		"windows-2025", "go-version-file: go.mod", "make verify TARGET=x86_64-pc-windows-msvc",
+		"make stage TARGET=x86_64-pc-windows-msvc OUT=package/dist",
 		"x86_64-pc-windows-msvc", "windows-system-artifact", "soksak-sidecar-pty.exe",
 	} {
 		if !strings.Contains(source, required) {

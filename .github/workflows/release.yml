@@ -2,6 +2,15 @@ name: release
 
 on:
   workflow_dispatch:
+    inputs:
+      spec_url:
+        description: Exact immutable soksak-spec package URL from the release train
+        required: true
+        type: string
+      spec_sha256:
+        description: SHA-256 of the exact soksak-spec package
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -32,22 +41,45 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Inject the exact spec validation tool
+        shell: bash
+        run: |
+          case "${{ inputs.spec_url }}" in
+            https://github.com/soksak-ai/soksak-spec/releases/download/v*/soksak-ai-plugin-spec-*.tgz) ;;
+            *) echo "spec_url is not an immutable soksak-spec release asset" >&2; exit 1 ;;
+          esac
+          digest="${{ inputs.spec_sha256 }}"
+          test "${#digest}" -eq 64
+          case "$digest" in *[!a-f0-9]*) echo "spec_sha256 is invalid" >&2; exit 1 ;; esac
+          mkdir -p .dependency/spec-package
+          curl -fsSL "${{ inputs.spec_url }}" -o .dependency/soksak-spec.tgz
+          actual="$(if command -v sha256sum >/dev/null 2>&1; then sha256sum .dependency/soksak-spec.tgz; else shasum -a 256 .dependency/soksak-spec.tgz; fi | awk '{print $1}')"
+          test "$actual" = "$digest"
+          tar -xzf .dependency/soksak-spec.tgz -C .dependency/spec-package --strip-components=1
+          test -z "$(find .dependency/spec-package -type l -print -quit)"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .dependency/spec-package/package.json
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test -count=1 ./... && go vet ./...
+      - if: runner.os == 'Windows'
+        shell: bash
+        run: choco install make --version=4.4.1 --no-progress --yes
+      - shell: bash
+        run: make verify TARGET="${{ matrix.target }}"
       - id: archive
         shell: bash
         run: |
-          ./stage.sh dist "${{ matrix.target }}"
+          make stage TARGET="${{ matrix.target }}" OUT=dist
+          make stage TARGET="${{ matrix.target }}" OUT=dist
           version="$(node -p 'require("./sidecar.json").version')"
           archive="soksak-sidecar-pty-$version-${{ matrix.target }}.tar.gz"
           mkdir -p package/dist
           cp dist/sidecar.json LICENSE package/
           cp dist/soksak-sidecar-pty* package/dist/
-          tar -czf "$archive" -C package LICENSE sidecar.json dist
-          if command -v sha256sum >/dev/null 2>&1; then sha256sum "$archive" > "$archive.sha256"; else shasum -a 256 "$archive" > "$archive.sha256"; fi
+          node .dependency/spec-package/release-template/sidecar/pack-target.mjs --source package --target "${{ matrix.target }}" --out "$archive"
           echo "asset=$archive" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -70,11 +102,18 @@ jobs:
           pattern: dist-*
           path: dist
           merge-multiple: true
-      - name: Install the immutable public spec package
+      - name: Inject the exact spec validation tool
         run: |
           mkdir -p .dependency/spec-package
-          curl -fsSL https://github.com/soksak-ai/soksak-spec/releases/download/v0.0.29/soksak-ai-plugin-spec-0.0.29.tgz -o .dependency/soksak-spec.tgz
-          echo "f3311f6e20069667486e753e8669e7f7787f197f47e4a94e14207a066c2db32c  .dependency/soksak-spec.tgz" | sha256sum -c -
+          case "${{ inputs.spec_url }}" in
+            https://github.com/soksak-ai/soksak-spec/releases/download/v*/soksak-ai-plugin-spec-*.tgz) ;;
+            *) echo "spec_url is not an immutable soksak-spec release asset" >&2; exit 1 ;;
+          esac
+          digest="${{ inputs.spec_sha256 }}"
+          test "${#digest}" -eq 64
+          case "$digest" in *[!a-f0-9]*) echo "spec_sha256 is invalid" >&2; exit 1 ;; esac
+          curl -fsSL "${{ inputs.spec_url }}" -o .dependency/soksak-spec.tgz
+          test "$(sha256sum .dependency/soksak-spec.tgz | awk '{print $1}')" = "$digest"
           tar -xzf .dependency/soksak-spec.tgz -C .dependency/spec-package --strip-components=1
           test -z "$(find .dependency/spec-package -type l -print -quit)"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020

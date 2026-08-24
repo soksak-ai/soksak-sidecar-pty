@@ -1,40 +1,38 @@
 #!/bin/sh
 set -eu
 
-repository=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 dist=${1:-dist}
-name=soksak-sidecar-pty
 target=${2:-}
-build_dir=${SOKSAK_BUILD_DIR:-target}
-extension=
-case "$target" in *windows*) extension=.exe ;; esac
+build_root=${3:-target}
+[ -n "$target" ] || { echo 'usage: stage.sh <out> <target> [build-root]' >&2; exit 2; }
 
-if [ -n "$target" ]; then
-  output="$build_dir/$target/release/$name$extension"
-  case "$target" in
-    *windows*) target_os=windows ;;
-    *linux*) target_os=linux ;;
-    *darwin*) target_os=darwin ;;
-    *) echo "unsupported target: $target" >&2; exit 1 ;;
-  esac
-  case "$target" in
-    aarch64-*|arm64-*) target_arch=arm64 ;;
-    x86_64-*) target_arch=amd64 ;;
-    *) echo "unsupported target: $target" >&2; exit 1 ;;
-  esac
-  mkdir -p "$(dirname "$output")"
-  GOOS="$target_os" GOARCH="$target_arch" go -C "$repository" build -o "$output" .
-else
-  output="$build_dir/release/$name"
-  mkdir -p "$(dirname "$output")"
-  go -C "$repository" build -o "$output" .
-fi
+repository=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+name=soksak-sidecar-pty
+set -- $("$repository/scripts/resolve-target.sh" "$target")
+extension=$3
+[ "$extension" != none ] || extension=
+output="$build_root/$target/release/$name$extension"
+[ -f "$output" ] || { echo "release binary is missing: $output" >&2; exit 1; }
 
 mkdir -p "$dist"
 temporary="$dist/.$name.tmp.$$"
+trap 'rm -f "$temporary" "$dist/.sidecar.json.tmp.$$"' EXIT HUP INT TERM
 cp "$output" "$temporary"
 chmod +x "$temporary"
 staged="$name$extension"
-mv -f "$temporary" "$dist/$staged"
-sed "s#\"process\": \"dist/$name\"#\"process\": \"dist/$staged\"#" "$repository/sidecar.json" > "$dist/sidecar.json"
-printf 'staged: %s\n' "$dist/$staged"
+if [ -e "$dist/$staged" ]; then
+  cmp -s "$temporary" "$dist/$staged" || { echo "staged binary conflicts with current build: $dist/$staged" >&2; exit 1; }
+  rm -f "$temporary"
+else
+  mv "$temporary" "$dist/$staged"
+fi
+
+manifest="$dist/.sidecar.json.tmp.$$"
+sed "s#\"process\": \"dist/$name\"#\"process\": \"dist/$staged\"#" "$repository/sidecar.json" > "$manifest"
+if [ -e "$dist/sidecar.json" ]; then
+  cmp -s "$manifest" "$dist/sidecar.json" || { echo "staged manifest conflicts with source: $dist/sidecar.json" >&2; exit 1; }
+  rm -f "$manifest"
+else
+  mv "$manifest" "$dist/sidecar.json"
+fi
+printf 'PTY_STAGED target=%s output=%s\n' "$target" "$dist/$staged"

@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -58,13 +57,13 @@ func TestSidecarManifestUsesCanonicalFields(t *testing.T) {
 	}
 }
 
-func TestStageUsesTheDeclaredBuildDirectory(t *testing.T) {
+func TestStageConsumesOnlyAnExplicitBuiltArtifact(t *testing.T) {
 	script, err := os.ReadFile("stage.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(script), "${SOKSAK_BUILD_DIR:-target}") {
-		t.Fatal("stage.sh must write build output under SOKSAK_BUILD_DIR")
+	if strings.Contains(string(script), "SOKSAK_BUILD_DIR") || strings.Contains(string(script), " go ") {
+		t.Fatal("stage.sh must not retain the legacy build environment or compile source")
 	}
 	if strings.Contains(string(script), "\"version\": \"0.0.") {
 		t.Fatal("stage.sh must not duplicate the sidecar version")
@@ -80,12 +79,12 @@ func TestStagePreservesTheWindowsExecutableExtension(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	bin := filepath.Join(root, "bin")
-	if err := os.MkdirAll(bin, 0o700); err != nil {
+	buildRoot := filepath.Join(root, "build")
+	built := filepath.Join(buildRoot, "x86_64-pc-windows-msvc", "release", "soksak-sidecar-pty.exe")
+	if err := os.MkdirAll(filepath.Dir(built), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	command := "#!/bin/sh\nset -eu\nwhile [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then shift; mkdir -p \"$(dirname \"$1\")\"; printf binary > \"$1\"; exit 0; fi; shift; done\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(command), 0o700); err != nil {
+	if err := os.WriteFile(built, []byte("binary"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	dist := filepath.Join(root, "dist")
@@ -93,8 +92,7 @@ func TestStagePreservesTheWindowsExecutableExtension(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(shell, filepath.Join(repository, "stage.sh"), dist, "x86_64-pc-windows-msvc")
-	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "SOKSAK_BUILD_DIR="+filepath.Join(root, "build"))
+	cmd := exec.Command(shell, filepath.Join(repository, "stage.sh"), dist, "x86_64-pc-windows-msvc", buildRoot)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("stage: %v\n%s", err, output)
 	}
@@ -111,55 +109,27 @@ func TestStagePreservesTheWindowsExecutableExtension(t *testing.T) {
 }
 
 func verifyStageDispatchesDeclaredDarwinARM64Target(t *testing.T) {
-	root := t.TempDir()
-	bin := filepath.Join(root, "bin")
-	if err := os.MkdirAll(bin, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	log := filepath.Join(root, "go.log")
-	lines := []string{
-		"#!/bin/sh", "set -eu",
-		"printf '%s %s\\n' \"$GOOS\" \"$GOARCH\" > \"$SOKSAK_TEST_GO_LOG\"",
-		"while [ $# -gt 0 ]; do",
-		"  if [ \"$1\" = -o ]; then shift; mkdir -p \"$(dirname \"$1\")\"; printf binary > \"$1\"; exit 0; fi",
-		"  shift",
-		"done",
-		"exit 1",
-	}
-	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(strings.Join(lines, "\n")+"\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	dist := filepath.Join(root, "dist")
-	cmd := exec.Command("/bin/sh", "./stage.sh", dist, "aarch64-apple-darwin")
-	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "SOKSAK_BUILD_DIR="+filepath.Join(root, "build"), "SOKSAK_TEST_GO_LOG="+log)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("stage: %v\n%s", err, output)
-	}
-	body, err := os.ReadFile(log)
+	output, err := exec.Command("/bin/sh", "./scripts/resolve-target.sh", "aarch64-apple-darwin").CombinedOutput()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("resolve target: %v\n%s", err, output)
 	}
-	if string(body) != "darwin arm64\n" {
-		t.Fatalf("target=%q", body)
-	}
-	if info, err := os.Stat(filepath.Join(dist, "soksak-sidecar-pty")); err != nil || !info.Mode().IsRegular() {
-		t.Fatalf("staged info=%v err=%v", info, err)
+	if string(output) != "darwin arm64 none\n" {
+		t.Fatalf("target mapping=%q", output)
 	}
 }
 
-func TestStageBuildsTheOwnerRepositoryFromAnyWorkingDirectory(t *testing.T) {
+func TestStageReadsTheExplicitBuildRootFromAnyWorkingDirectory(t *testing.T) {
 	repository, err := filepath.Abs(".")
 	if err != nil {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	bin := filepath.Join(root, "bin")
-	if err := os.MkdirAll(bin, 0o700); err != nil {
+	buildRoot := filepath.Join(root, "build")
+	built := filepath.Join(buildRoot, "aarch64-unknown-linux-gnu", "release", "soksak-sidecar-pty")
+	if err := os.MkdirAll(filepath.Dir(built), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	log := filepath.Join(root, "go.log")
-	command := "#!/bin/sh\nset -eu\nprintf '%s\n' \"$@\" > \"$SOKSAK_TEST_GO_LOG\"\nwhile [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then shift; mkdir -p \"$(dirname \"$1\")\"; printf binary > \"$1\"; exit 0; fi; shift; done\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(command), 0o700); err != nil {
+	if err := os.WriteFile(built, []byte("binary"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	dist := filepath.Join(root, "dist")
@@ -167,25 +137,12 @@ func TestStageBuildsTheOwnerRepositoryFromAnyWorkingDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(shell, filepath.Join(repository, "stage.sh"), dist, "aarch64-unknown-linux-gnu")
+	cmd := exec.Command(shell, filepath.Join(repository, "stage.sh"), dist, "aarch64-unknown-linux-gnu", buildRoot)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "SOKSAK_BUILD_DIR="+filepath.Join(root, "build"), "SOKSAK_TEST_GO_LOG="+log)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("stage: %v\n%s", err, output)
 	}
-	body, err := os.ReadFile(log)
-	if err != nil {
-		t.Fatal(err)
+	if body, err := os.ReadFile(filepath.Join(dist, "soksak-sidecar-pty")); err != nil || string(body) != "binary" {
+		t.Fatalf("staged binary=%q err=%v", body, err)
 	}
-	arguments := strings.Split(strings.TrimSpace(string(body)), "\n")
-	if len(arguments) < 4 || arguments[0] != "-C" || canonicalShellPath(arguments[1]) != filepath.Clean(repository) || arguments[2] != "build" || arguments[len(arguments)-1] != "." {
-		t.Fatalf("go arguments do not build from owner repository %q: %q", repository, body)
-	}
-}
-
-func canonicalShellPath(value string) string {
-	if runtime.GOOS == "windows" && len(value) >= 3 && value[0] == '/' && value[2] == '/' {
-		value = strings.ToUpper(value[1:2]) + ":" + value[2:]
-	}
-	return filepath.Clean(filepath.FromSlash(value))
 }
