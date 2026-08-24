@@ -41,6 +41,23 @@ func TestObserverReceivesAbsoluteOutputRangesWithoutAffectingRendererAck(t *test
 	}
 }
 
+func TestObserverCoalescesAdjacentQueuedOutputRanges(t *testing.T) {
+	observer := newObserver(64)
+	observer.publishOutput(ptycontract.OutputObservation{
+		EventSequence: 1, FromSequence: 0, ThroughSequence: 4, Bytes: []byte("aaaa"),
+	})
+	observer.publishOutput(ptycontract.OutputObservation{
+		EventSequence: 2, FromSequence: 4, ThroughSequence: 8, Bytes: []byte("bbbb"),
+	})
+
+	event := observer.next()
+	if event.Output == nil || event.Output.EventSequence != 2 ||
+		event.Output.FromSequence != 0 || event.Output.ThroughSequence != 8 ||
+		string(event.Output.Bytes) != "aaaabbbb" {
+		t.Fatalf("coalesced observer event = %#v", event)
+	}
+}
+
 func TestSlowObserverReportsTheDroppedSourceRange(t *testing.T) {
 	observer := newObserver(4)
 	observer.publishOutput(ptycontract.OutputObservation{
