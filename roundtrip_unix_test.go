@@ -102,7 +102,7 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 	if err := send.Encode(request("open", ptycontract.CommandOpen, map[string]any{
 		"request": ptycontract.Open{
 			PaneID: "pane-1", Cols: 80, Rows: 24, Shell: shell,
-			Environment: [][2]string{{"PATH", os.Getenv("PATH")}},
+			Environment: ptycontract.ReplaceEnvironment([][2]string{{"PATH", os.Getenv("PATH")}}),
 			WindowLabel: "w1",
 		},
 	})); err != nil {

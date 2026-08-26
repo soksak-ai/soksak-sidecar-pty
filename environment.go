@@ -5,6 +5,8 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+
+	ptycontract "github.com/soksak-ai/soksak-contract-pty"
 )
 
 // The environment a session runs in is the caller's, and this daemon's own when the caller sends
@@ -17,14 +19,16 @@ import (
 //
 // A caller that does send one replaces it whole rather than adding to it. Merging would make the
 // result depend on what happened to be in this process, which is the thing an explicit environment
-// exists to pin down.
+// exists to pin down. Session variables are the one addition: they ride on top of whichever
+// environment applies, already limited by the contract to the SOKSAK_ namespace.
 //
 // The defaults below are the terminal facts a tty needs, applied only where nothing named them.
-func sessionEnvironment(entries [][2]string, drop []string) []string {
+func sessionEnvironment(env ptycontract.Environment, drop []string) []string {
+	entries := env.Replace
 	if len(entries) == 0 {
 		entries = inherited()
 	}
-	return applyEnvironment(entries, drop)
+	return applyEnvironment(entries, env.Variables, drop)
 }
 
 // inherited is this process's environment as pairs.
@@ -41,7 +45,7 @@ func inherited() [][2]string {
 	return entries
 }
 
-func applyEnvironment(entries [][2]string, drop []string) []string {
+func applyEnvironment(entries [][2]string, variables map[string]string, drop []string) []string {
 	caseInsensitive := runtime.GOOS == "windows"
 	normalize := func(name string) string {
 		if caseInsensitive {
@@ -54,19 +58,39 @@ func applyEnvironment(entries [][2]string, drop []string) []string {
 	for _, name := range drop {
 		dropped[normalize(name)] = struct{}{}
 	}
+	// A session variable replaces an inherited value under the same name rather than duplicating
+	// it: two entries for one name is a shell deciding which wins.
+	overridden := make(map[string]struct{}, len(variables))
+	for name := range variables {
+		overridden[normalize(name)] = struct{}{}
+	}
 
-	given := make(map[string]struct{}, len(entries))
-	result := make([]string, 0, len(entries)+len(ttyDefaults()))
+	given := make(map[string]struct{}, len(entries)+len(variables))
+	result := make([]string, 0, len(entries)+len(variables)+len(ttyDefaults()))
 	for _, entry := range entries {
-		if _, remove := dropped[normalize(entry[0])]; remove {
+		key := normalize(entry[0])
+		if _, remove := dropped[key]; remove {
 			continue
 		}
-		given[normalize(entry[0])] = struct{}{}
+		if _, replaced := overridden[key]; replaced {
+			continue
+		}
+		given[key] = struct{}{}
 		result = append(result, entry[0]+"="+entry[1])
 	}
 
+	names := make([]string, 0, len(variables))
+	for name := range variables {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		given[normalize(name)] = struct{}{}
+		result = append(result, name+"="+variables[name])
+	}
+
 	defaults := ttyDefaults()
-	names := make([]string, 0, len(defaults))
+	names = names[:0]
 	for name := range defaults {
 		if _, already := given[normalize(name)]; already {
 			continue

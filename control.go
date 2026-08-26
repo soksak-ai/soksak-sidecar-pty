@@ -427,6 +427,11 @@ func (d *daemon) open(args map[string]json.RawMessage) (string, any, error) {
 	if err != nil {
 		return "ARGUMENT", nil, err
 	}
+	// Checked before the pane lookup, so a request this daemon would never start a shell from is
+	// refused on the first call rather than only on the call that happens to find no session.
+	if err := request.Validate(); err != nil {
+		return "ARGUMENT", nil, err
+	}
 	// A pane that already holds a session is answered with it rather than given a second shell. Two
 	// shells behind one pane is a shell nobody can reach and nobody reaps.
 	if existing, held := d.registry.byPane(request.PaneID); held && request.PaneID != "" {
