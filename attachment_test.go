@@ -24,10 +24,16 @@ func TestAttachedRendererOwnsBackpressureUntilDetach(t *testing.T) {
 	if !value.shouldPause(written) {
 		t.Fatal("an attached renderer above the high watermark did not pause the reader")
 	}
-	if _, err := value.attachRenderer(); err == nil {
-		t.Fatal("a second renderer attached to the same ACK coordinate")
+	// A session has one renderer: the last to attach. The one it replaced cannot detach it.
+	second, err := value.attachRenderer()
+	if err != nil {
+		t.Fatalf("the next renderer was refused: %v", err)
 	}
 	value.detachRenderer(first)
+	if !value.shouldPause(written) {
+		t.Fatal("the renderer that is there stopped owning backpressure when the one it replaced left")
+	}
+	value.detachRenderer(second)
 	if value.shouldPause(written) {
 		t.Fatal("a detached renderer kept the reader paused")
 	}

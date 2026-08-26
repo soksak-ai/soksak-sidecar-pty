@@ -47,6 +47,8 @@ type session struct {
 	detachedAt time.Time
 	// now is the registry's clock, so a detach is stamped by the same clock that judges it.
 	now func() time.Time
+	// writtenAt is when this session last produced output. A session still writing is working.
+	writtenAt time.Time
 	// resume releases the reader when a paused client has acked back down to the low mark.
 	resume        chan struct{}
 	eventSequence uint64
@@ -68,7 +70,7 @@ type registry struct {
 	now          func() time.Time
 }
 
-const defaultAbandonAfter = 2 * time.Minute
+const defaultAbandonAfter = 30 * time.Minute
 
 func newRegistry(shell string) *registry {
 	return &registry{
@@ -164,6 +166,7 @@ func (value *session) pump() {
 			value.mu.Lock()
 			from := value.written
 			value.written = value.ring.write(buffer[:count])
+			value.writtenAt = value.stamp()
 			value.eventSequence++
 			eventSequence := value.eventSequence
 			written := value.written
@@ -193,12 +196,13 @@ func (value *session) pump() {
 	}
 }
 
+// attachRenderer makes the caller this session's renderer. A session has one, and it is the last to
+// attach: a run that went away without detaching left a mark, and refusing the next attach because
+// of it leaves a pane nothing can ever draw again. The one that left holds an older generation, so
+// its detach cannot take the one that replaced it.
 func (value *session) attachRenderer() (uint64, error) {
 	value.mu.Lock()
 	defer value.mu.Unlock()
-	if value.rendererAttached {
-		return 0, fmt.Errorf("session %d already has an attached renderer", value.id)
-	}
 	value.rendererGeneration++
 	if value.rendererGeneration == 0 {
 		value.rendererGeneration = 1
@@ -258,12 +262,16 @@ func (value *session) stamp() time.Time {
 	return value.now()
 }
 
-// detachedBefore answers whether this session has had no renderer since before the given moment.
-// A session with a renderer, and one that has never had one, are both attached to something.
-func (value *session) detachedBefore(moment time.Time) bool {
+// abandonedSince answers whether this session has had no renderer and produced no output since
+// before the given moment. A session with a renderer, one that has never had one, and one still
+// writing are all doing work for someone.
+func (value *session) abandonedSince(moment time.Time) bool {
 	value.mu.Lock()
 	defer value.mu.Unlock()
-	return !value.rendererAttached && !value.detachedAt.IsZero() && value.detachedAt.Before(moment)
+	if value.rendererAttached || value.detachedAt.IsZero() || !value.detachedAt.Before(moment) {
+		return false
+	}
+	return value.writtenAt.IsZero() || value.writtenAt.Before(moment)
 }
 
 func (value *session) rendererIsAttached() bool {
@@ -406,7 +414,7 @@ func (reg *registry) endAbandoned() int {
 	reg.mu.Lock()
 	abandoned := make([]*session, 0, len(reg.sessions))
 	for id, value := range reg.sessions {
-		if value.detachedBefore(deadline) {
+		if value.abandonedSince(deadline) {
 			abandoned = append(abandoned, value)
 			delete(reg.sessions, id)
 		}

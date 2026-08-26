@@ -84,3 +84,60 @@ func TestReattachingClearsTheAbandonWindow(t *testing.T) {
 		t.Fatalf("ended=%d, want 1", ended)
 	}
 }
+
+// A session still producing output is doing work for someone, whatever is attached to it.
+func TestASessionStillWritingIsNotAbandoned(t *testing.T) {
+	registry := newRegistry("/bin/sh")
+	t.Cleanup(func() { registry.shutdown() })
+	clock := time.Unix(1_700_000_000, 0)
+	registry.now = func() time.Time { return clock }
+	registry.abandonAfter = time.Minute
+
+	value, err := registry.open(abandonRequest("pane-busy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := value.attachRenderer(); err != nil {
+		t.Fatal(err)
+	}
+	value.detachActiveRenderer()
+	clock = clock.Add(2 * time.Minute)
+	// The shell wrote while nothing was attached, as one running work does.
+	value.mu.Lock()
+	value.writtenAt = clock
+	value.mu.Unlock()
+	if ended := registry.endAbandoned(); ended != 0 {
+		t.Fatalf("a session still writing was ended: %d", ended)
+	}
+	clock = clock.Add(2 * time.Minute)
+	if ended := registry.endAbandoned(); ended != 1 {
+		t.Fatalf("ended=%d, want 1", ended)
+	}
+}
+
+// A session has one renderer: the last one to attach. A run that went away without detaching left a
+// mark, and refusing the next attach because of it leaves a pane nothing can ever draw again.
+func TestAttachingReplacesTheRendererThatWentAway(t *testing.T) {
+	registry := newRegistry("/bin/sh")
+	t.Cleanup(func() { registry.shutdown() })
+	value, err := registry.open(abandonRequest("pane-attach"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := value.attachRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := value.attachRenderer()
+	if err != nil {
+		t.Fatalf("the next renderer was refused: %v", err)
+	}
+	if second == first {
+		t.Fatal("the replacement carries the generation of the one it replaced")
+	}
+	// The one that went away cannot detach the one that took its place.
+	value.detachRenderer(first)
+	if !value.rendererIsAttached() {
+		t.Fatal("the renderer that is there was detached by the one that left")
+	}
+}
