@@ -1,2 +1,4 @@
 soksak-sidecar-pty
 dist/
+go.work
+go.work.sum
