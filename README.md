@@ -15,6 +15,15 @@ attached, `fromSeq` is how a client that comes back says where it got to, and th
 watermarks bound what one unattended session can cost.
 Status reports the last size successfully applied to each PTY and its source event sequence.
 
+A session has one renderer: the last to attach. A run that went away without detaching left a mark,
+and refusing the next attach because of it would leave a pane nothing can ever draw again. The one
+that left holds an older generation, so its detach cannot take the one that replaced it.
+
+A session with no renderer and no output for half an hour is what a run that went away left behind,
+and it ends: nothing can reach that shell, and it holds a process, its output ring and its file
+descriptors. A session still producing output is doing work for someone and is never ended here,
+whatever is attached to it.
+
 ## What it does not do
 
 It never reads what a byte means. No escape sequences, no screen, no scrollback grid, no prompt
