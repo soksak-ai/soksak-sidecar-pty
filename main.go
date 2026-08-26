@@ -27,6 +27,7 @@ import (
 
 	controlwire "github.com/soksak-ai/soksak-contract-control"
 	ptycontract "github.com/soksak-ai/soksak-contract-pty"
+	"time"
 )
 
 func main() {
@@ -95,15 +96,39 @@ func run(home, runtimeRoot, shell string) error {
 
 	go accept(control, d.serveControl)
 
+	// Sessions nothing reattaches to end on their own. Without this a run that went away leaves its
+	// shells running for as long as this daemon does, and nothing can reach them again.
+	sweepDone := make(chan struct{})
+	go sweepAbandoned(d.registry, sweepDone)
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
+	close(sweepDone)
 	_ = control.Close()
 	ended := d.registry.shutdown()
 	fmt.Fprintf(os.Stderr, "soksak-sidecar-pty: ended %d session(s) on shutdown\n", ended)
 	return nil
 }
+
+// sweepAbandoned ends sessions past the abandon window until the daemon stops.
+func sweepAbandoned(reg *registry, done <-chan struct{}) {
+	ticker := time.NewTicker(sweepEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			if ended := reg.endAbandoned(); ended > 0 {
+				fmt.Fprintf(os.Stderr, "soksak-sidecar-pty: ended %d abandoned session(s)\n", ended)
+			}
+		}
+	}
+}
+
+const sweepEvery = 15 * time.Second
 
 func accept(listener net.Listener, serve func(net.Conn)) {
 	for {

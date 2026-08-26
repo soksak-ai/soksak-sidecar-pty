@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	ptycontract "github.com/soksak-ai/soksak-contract-pty"
+	"time"
 )
 
 type sessionProcess interface {
@@ -42,6 +43,10 @@ type session struct {
 	paused             bool
 	rendererGeneration uint64
 	rendererAttached   bool
+	// detachedAt is when this session last had no renderer. Zero means one is attached.
+	detachedAt time.Time
+	// now is the registry's clock, so a detach is stamped by the same clock that judges it.
+	now func() time.Time
 	// resume releases the reader when a paused client has acked back down to the low mark.
 	resume        chan struct{}
 	eventSequence uint64
@@ -56,10 +61,20 @@ type registry struct {
 	sessions   map[uint64]*session
 	shell      string
 	stopped    bool
+	// A session with no renderer is kept this long so a view that unmounted can mount again and
+	// reattach. Past it the session is what a run that went away left behind, and it ends: nothing
+	// can reach that shell, and it holds a process, its output ring and its file descriptors.
+	abandonAfter time.Duration
+	now          func() time.Time
 }
 
+const defaultAbandonAfter = 2 * time.Minute
+
 func newRegistry(shell string) *registry {
-	return &registry{sessions: make(map[uint64]*session), shell: shell}
+	return &registry{
+		sessions: make(map[uint64]*session), shell: shell,
+		abandonAfter: defaultAbandonAfter, now: time.Now,
+	}
 }
 
 // open starts a shell and returns its session.
@@ -114,6 +129,7 @@ func (reg *registry) openWithObserver(
 		ring:           newRing(ptycontract.HighWatermark),
 		observers:      make(map[*observer]struct{}),
 		observerTokens: make(map[string]*observer),
+		now:            reg.now,
 		resume:         make(chan struct{}, 1),
 		cols:           request.Cols,
 		rows:           request.Rows,
@@ -188,6 +204,7 @@ func (value *session) attachRenderer() (uint64, error) {
 		value.rendererGeneration = 1
 	}
 	value.rendererAttached = true
+	value.detachedAt = time.Time{}
 	return value.rendererGeneration, nil
 }
 
@@ -199,6 +216,7 @@ func (value *session) replaceRenderer() uint64 {
 	}
 	generation := value.rendererGeneration
 	value.rendererAttached = true
+	value.detachedAt = time.Time{}
 	value.mu.Unlock()
 	return generation
 }
@@ -207,6 +225,7 @@ func (value *session) detachRenderer(generation uint64) {
 	value.mu.Lock()
 	if value.rendererAttached && value.rendererGeneration == generation {
 		value.rendererAttached = false
+		value.detachedAt = value.stamp()
 	}
 	value.mu.Unlock()
 	select {
@@ -219,6 +238,9 @@ func (value *session) detachActiveRenderer() bool {
 	value.mu.Lock()
 	detached := value.rendererAttached
 	value.rendererAttached = false
+	if detached {
+		value.detachedAt = value.stamp()
+	}
 	value.mu.Unlock()
 	if detached {
 		select {
@@ -227,6 +249,21 @@ func (value *session) detachActiveRenderer() bool {
 		}
 	}
 	return detached
+}
+
+func (value *session) stamp() time.Time {
+	if value.now == nil {
+		return time.Now()
+	}
+	return value.now()
+}
+
+// detachedBefore answers whether this session has had no renderer since before the given moment.
+// A session with a renderer, and one that has never had one, are both attached to something.
+func (value *session) detachedBefore(moment time.Time) bool {
+	value.mu.Lock()
+	defer value.mu.Unlock()
+	return !value.rendererAttached && !value.detachedAt.IsZero() && value.detachedAt.Before(moment)
 }
 
 func (value *session) rendererIsAttached() bool {
@@ -357,6 +394,28 @@ func (value *session) reap() {
 	case value.resume <- struct{}{}:
 	default:
 	}
+}
+
+// endAbandoned ends every session no renderer has been attached to for longer than the window, and
+// answers how many ended.
+func (reg *registry) endAbandoned() int {
+	if reg.abandonAfter <= 0 {
+		return 0
+	}
+	deadline := reg.now().Add(-reg.abandonAfter)
+	reg.mu.Lock()
+	abandoned := make([]*session, 0, len(reg.sessions))
+	for id, value := range reg.sessions {
+		if value.detachedBefore(deadline) {
+			abandoned = append(abandoned, value)
+			delete(reg.sessions, id)
+		}
+	}
+	reg.mu.Unlock()
+	for _, value := range abandoned {
+		value.reap()
+	}
+	return len(abandoned)
 }
 
 func (reg *registry) get(id uint64) (*session, error) {
