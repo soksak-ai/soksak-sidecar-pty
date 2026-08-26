@@ -363,9 +363,12 @@ func (value *session) removeObserver(observer *observer) {
 
 // ack records the client's progress and releases the reader when it is far enough back.
 func (value *session) ack(bytes uint64) {
-	value.ring.ack(bytes)
 	value.mu.Lock()
 	written := value.written
+	if bytes > written {
+		bytes = written
+	}
+	value.ring.ack(bytes)
 	value.mu.Unlock()
 	if value.ring.resumed(written) {
 		select {

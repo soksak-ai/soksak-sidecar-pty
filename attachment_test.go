@@ -84,3 +84,15 @@ func TestExplicitDetachAllowsReplacementWithoutStaleStreamClearingIt(t *testing.
 		t.Fatal("replacement renderer remained attached")
 	}
 }
+
+func TestAcknowledgementCannotAdvancePastSessionOutput(t *testing.T) {
+	value := &session{ring: newRing(ptycontract.HighWatermark), resume: make(chan struct{}, 1), written: 306}
+	value.ack(612)
+	acked, _ := value.ring.state()
+	if acked != value.written {
+		t.Fatalf("acknowledged=%d written=%d", acked, value.written)
+	}
+	if value.shouldPause(value.written) {
+		t.Fatal("an acknowledgement ahead of output underflowed into a paused reader")
+	}
+}
