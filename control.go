@@ -60,6 +60,7 @@ func (d *daemon) commands() map[string]handler {
 		ptycontract.CommandLease:           d.lease,
 		ptycontract.CommandDetachRenderer:  d.detachRenderer,
 		ptycontract.CommandPrepareObserver: d.prepareObserver,
+		ptycontract.CommandDisplays:        d.displays,
 	}
 }
 
@@ -172,6 +173,24 @@ func (d *daemon) lease(args map[string]json.RawMessage) (string, any, error) {
 	}, nil
 }
 
+func (d *daemon) displays(args map[string]json.RawMessage) (string, any, error) {
+	request, err := decode[ptycontract.Displays](args)
+	if err != nil {
+		return "ARGUMENT", nil, err
+	}
+	if request.Token == "" {
+		return "ARGUMENT", nil, fmt.Errorf("an observer token names which observer displays")
+	}
+	value, err := d.registry.get(request.Session)
+	if err != nil {
+		return "NO_SESSION", nil, err
+	}
+	if err := value.setDisplays(request.Token, request.Displays); err != nil {
+		return "OBSERVER_NOT_FOUND", nil, err
+	}
+	return "", ptycontract.Displayed{Session: request.Session, Displays: request.Displays}, nil
+}
+
 func (d *daemon) prepareObserver(args map[string]json.RawMessage) (string, any, error) {
 	request, err := decode[ptycontract.PrepareObserver](args)
 	if err != nil {
@@ -222,6 +241,9 @@ func (d *daemon) observePrepared(conn net.Conn, writer *json.Encoder, request co
 		return
 	}
 	deliverObservations(conn, prepared.observer)
+	if value, held := d.registry.byPane(prepared.request.PaneID); held {
+		value.removeObserver(prepared.observer)
+	}
 }
 
 func (d *daemon) attachLease(conn net.Conn, writer *json.Encoder, request controlwire.Request) {
@@ -274,7 +296,7 @@ func (d *daemon) observe(conn net.Conn, writer *json.Encoder, request controlwir
 		_ = writer.Encode(refusal(request, "NO_SESSION", err.Error()))
 		return
 	}
-	observer, observed, err := value.observe(ask.Token)
+	observer, observed, err := value.observe(ask.Token, ask.Displays)
 	if err != nil {
 		_ = writer.Encode(refusal(request, "OBSERVER_TOKEN", err.Error()))
 		return

@@ -90,7 +90,7 @@ func TestObserverStartsWithTheRetainedPrefix(t *testing.T) {
 	session.written = session.ring.write([]byte("prompt"))
 	session.eventSequence = 1
 
-	observer, receipt, err := session.observe("")
+	observer, receipt, err := session.observe("", false)
 	if err != nil {
 		t.Fatal(err)
 	}

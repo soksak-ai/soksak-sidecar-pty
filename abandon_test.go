@@ -141,3 +141,73 @@ func TestAttachingReplacesTheRendererThatWentAway(t *testing.T) {
 		t.Fatal("the renderer that is there was detached by the one that left")
 	}
 }
+
+// A displaying observer is the pane's picture. The renderer leaving does not abandon a session an
+// engine is still showing; the abandonment clock starts when the last display goes dark.
+func TestADisplayingObserverHoldsTheSession(t *testing.T) {
+	registry := newRegistry("/bin/sh")
+	t.Cleanup(func() { registry.shutdown() })
+	clock := time.Unix(1_700_000_000, 0)
+	registry.now = func() time.Time { return clock }
+	registry.abandonAfter = 2 * time.Minute
+
+	prepared := &preparedObserver{
+		request:  ptycontract.PrepareObserver{PaneID: "pane-shown", WindowLabel: "w", Provider: "engine", Displays: true},
+		observer: newObserver(ptycontract.ObserverBufferBytes),
+	}
+	shown, err := registry.openWithObserver(ptycontract.Open{
+		PaneID: "pane-shown", WindowLabel: "w", Cols: 80, Rows: 24, Shell: "/bin/sh", ObserverToken: "tok-shown",
+	}, prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shown.attachRenderer(); err != nil {
+		t.Fatal(err)
+	}
+	shown.detachActiveRenderer()
+
+	clock = clock.Add(3 * time.Minute)
+	if ended := registry.endAbandoned(); ended != 0 {
+		t.Fatalf("a displayed session was ended as abandoned: %d", ended)
+	}
+
+	if err := shown.setDisplays("tok-shown", false); err != nil {
+		t.Fatal(err)
+	}
+	clock = clock.Add(119 * time.Second)
+	if ended := registry.endAbandoned(); ended != 0 {
+		t.Fatalf("the clock started before the last display went dark: %d", ended)
+	}
+	clock = clock.Add(2 * time.Second)
+	if ended := registry.endAbandoned(); ended != 1 {
+		t.Fatalf("ended=%d, want 1 after the last display went dark", ended)
+	}
+}
+
+// A session no renderer ever attaches to keeps a zero detach stamp and never abandons today.
+// Displays gives it the same lifecycle as a rendered pane: shown, then unshown, it ends.
+func TestAnUndisplayedNeverRenderedSessionAbandons(t *testing.T) {
+	registry := newRegistry("/bin/sh")
+	t.Cleanup(func() { registry.shutdown() })
+	clock := time.Unix(1_700_000_000, 0)
+	registry.now = func() time.Time { return clock }
+	registry.abandonAfter = 2 * time.Minute
+
+	prepared := &preparedObserver{
+		request:  ptycontract.PrepareObserver{PaneID: "pane-dark", WindowLabel: "w", Provider: "engine", Displays: true},
+		observer: newObserver(ptycontract.ObserverBufferBytes),
+	}
+	dark, err := registry.openWithObserver(ptycontract.Open{
+		PaneID: "pane-dark", WindowLabel: "w", Cols: 80, Rows: 24, Shell: "/bin/sh", ObserverToken: "tok-dark",
+	}, prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dark.setDisplays("tok-dark", false); err != nil {
+		t.Fatal(err)
+	}
+	clock = clock.Add(3 * time.Minute)
+	if ended := registry.endAbandoned(); ended != 1 {
+		t.Fatalf("ended=%d, want 1 for an unshown never-rendered session", ended)
+	}
+}

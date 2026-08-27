@@ -33,6 +33,9 @@ type session struct {
 	ring           *ring
 	observers      map[*observer]struct{}
 	observerTokens map[string]*observer
+	// displaying is the subset of observers showing this session to someone. A member here is
+	// a picture of the shell, and the abandonment judgment treats it exactly as a renderer.
+	displaying map[*observer]struct{}
 
 	mu      sync.Mutex
 	written uint64
@@ -131,6 +134,7 @@ func (reg *registry) openWithObserver(
 		ring:           newRing(ptycontract.HighWatermark),
 		observers:      make(map[*observer]struct{}),
 		observerTokens: make(map[string]*observer),
+		displaying:     make(map[*observer]struct{}),
 		now:            reg.now,
 		resume:         make(chan struct{}, 1),
 		cols:           request.Cols,
@@ -139,6 +143,9 @@ func (reg *registry) openWithObserver(
 	if prepared != nil {
 		value.observers[prepared.observer] = struct{}{}
 		value.observerTokens[request.ObserverToken] = prepared.observer
+		if prepared.request.Displays {
+			value.displaying[prepared.observer] = struct{}{}
+		}
 	}
 	reg.sessions[value.id] = value
 	reg.mu.Unlock()
@@ -229,7 +236,9 @@ func (value *session) detachRenderer(generation uint64) {
 	value.mu.Lock()
 	if value.rendererAttached && value.rendererGeneration == generation {
 		value.rendererAttached = false
-		value.detachedAt = value.stamp()
+		if !value.presenceLocked() {
+			value.detachedAt = value.stamp()
+		}
 	}
 	value.mu.Unlock()
 	select {
@@ -242,7 +251,7 @@ func (value *session) detachActiveRenderer() bool {
 	value.mu.Lock()
 	detached := value.rendererAttached
 	value.rendererAttached = false
-	if detached {
+	if detached && !value.presenceLocked() {
 		value.detachedAt = value.stamp()
 	}
 	value.mu.Unlock()
@@ -268,7 +277,7 @@ func (value *session) stamp() time.Time {
 func (value *session) abandonedSince(moment time.Time) bool {
 	value.mu.Lock()
 	defer value.mu.Unlock()
-	if value.rendererAttached || value.detachedAt.IsZero() || !value.detachedAt.Before(moment) {
+	if value.presenceLocked() || value.detachedAt.IsZero() || !value.detachedAt.Before(moment) {
 		return false
 	}
 	return value.writtenAt.IsZero() || value.writtenAt.Before(moment)
@@ -317,7 +326,7 @@ func (value *session) resize(cols, rows uint16) error {
 	return nil
 }
 
-func (value *session) observe(token string) (*observer, ptycontract.Observed, error) {
+func (value *session) observe(token string, displays bool) (*observer, ptycontract.Observed, error) {
 	value.mu.Lock()
 	defer value.mu.Unlock()
 	if token != "" {
@@ -326,6 +335,10 @@ func (value *session) observe(token string) (*observer, ptycontract.Observed, er
 			return nil, ptycontract.Observed{}, fmt.Errorf("observer token is not bound to session %d", value.id)
 		}
 		delete(value.observerTokens, token)
+		if displays {
+			value.displaying[observer] = struct{}{}
+			value.detachedAt = time.Time{}
+		}
 		return observer, ptycontract.Observed{
 			Session: value.id, Generation: value.generation,
 			StartEventSequence: value.eventSequence, StartOutputSequence: value.written,
@@ -333,6 +346,10 @@ func (value *session) observe(token string) (*observer, ptycontract.Observed, er
 	}
 	observer := newObserver(ptycontract.ObserverBufferBytes)
 	value.observers[observer] = struct{}{}
+	if displays {
+		value.displaying[observer] = struct{}{}
+		value.detachedAt = time.Time{}
+	}
 	floor, through, retained := value.ring.snapshot()
 	if floor > 0 {
 		observer.mu.Lock()
@@ -356,9 +373,49 @@ func (value *session) observe(token string) (*observer, ptycontract.Observed, er
 
 func (value *session) removeObserver(observer *observer) {
 	value.mu.Lock()
+	_, showed := value.displaying[observer]
 	delete(value.observers, observer)
+	delete(value.displaying, observer)
+	for token, bound := range value.observerTokens {
+		if bound == observer {
+			delete(value.observerTokens, token)
+		}
+	}
+	if showed && !value.presenceLocked() && value.detachedAt.IsZero() {
+		value.detachedAt = value.stamp()
+	}
 	value.mu.Unlock()
 	observer.close()
+}
+
+// presenceLocked answers whether anything is showing this session: an attached renderer or a
+// displaying observer. Callers hold value.mu.
+func (value *session) presenceLocked() bool {
+	return value.rendererAttached || len(value.displaying) > 0
+}
+
+// setDisplays flips whether the token-bound observer is showing this session. Gaining a display
+// clears the detach stamp exactly as a renderer attach does; losing the last one starts the
+// abandonment clock, renderer or none.
+func (value *session) setDisplays(token string, displays bool) error {
+	value.mu.Lock()
+	defer value.mu.Unlock()
+	observer := value.observerTokens[token]
+	if observer == nil {
+		return fmt.Errorf("observer token is not bound to session %d", value.id)
+	}
+	if displays {
+		value.displaying[observer] = struct{}{}
+		value.detachedAt = time.Time{}
+		return nil
+	}
+	if _, showed := value.displaying[observer]; showed {
+		delete(value.displaying, observer)
+		if !value.presenceLocked() {
+			value.detachedAt = value.stamp()
+		}
+	}
+	return nil
 }
 
 // ack records the client's progress and releases the reader when it is far enough back.
