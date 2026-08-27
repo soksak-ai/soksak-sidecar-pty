@@ -574,3 +574,44 @@ func (reg *registry) shutdown() int {
 	}
 	return len(values)
 }
+
+// observerCounts reports, per session, how many observation consumers the pump
+// fans out to. Diagnostic: the counts name where a silent pane lost its feed.
+func (reg *registry) observerCounts() []map[string]any {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	out := make([]map[string]any, 0, len(reg.sessions))
+	for _, value := range reg.sessions {
+		value.mu.Lock()
+		out = append(out, map[string]any{
+			"session":    value.id,
+			"paneId":     value.paneID,
+			"observers":  len(value.observers),
+			"displaying": len(value.displaying),
+			"tokens":     len(value.observerTokens),
+			"closed":     value.closed,
+		})
+		value.mu.Unlock()
+	}
+	return out
+}
+
+// adoptObserver attaches a prepared observer to this running session and hands
+// it the opened frame at the session's current coordinates. An open that finds
+// its pane already served must not drop the observer it was handed.
+func (value *session) adoptObserver(token string, prepared *preparedObserver) {
+	value.mu.Lock()
+	value.observers[prepared.observer] = struct{}{}
+	value.observerTokens[token] = prepared.observer
+	if prepared.request.Displays {
+		value.displaying[prepared.observer] = struct{}{}
+	}
+	eventSequence := value.eventSequence
+	written := value.written
+	generation := value.generation
+	value.mu.Unlock()
+	prepared.observer.publishOpened(ptycontract.OpenedObservation{
+		Session: value.id, Generation: generation,
+		EventSequence: eventSequence, OutputSequence: written,
+	})
+}

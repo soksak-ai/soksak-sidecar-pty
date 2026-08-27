@@ -61,7 +61,15 @@ func (d *daemon) commands() map[string]handler {
 		ptycontract.CommandDetachRenderer:  d.detachRenderer,
 		ptycontract.CommandPrepareObserver: d.prepareObserver,
 		ptycontract.CommandDisplays:        d.displays,
+		"pty.observers":                    d.observers,
 	}
+}
+
+// observers answers the one question the session list cannot: who is attached
+// to each session right now. A diagnostic surface — the shape stays out of the
+// contract until the numbers earn a place there.
+func (d *daemon) observers(map[string]json.RawMessage) (string, any, error) {
+	return "", d.registry.observerCounts(), nil
 }
 
 func (d *daemon) detachRenderer(args map[string]json.RawMessage) (string, any, error) {
@@ -240,6 +248,18 @@ func (d *daemon) observePrepared(conn net.Conn, writer *json.Encoder, request co
 	}); err != nil {
 		return
 	}
+	// The peer closing the connection is the only end signal this stream gets:
+	// the delivery loop parks on an empty queue and never touches the socket
+	// again, so a dead peer would otherwise hold the observer forever.
+	go func() {
+		buffer := make([]byte, 256)
+		for {
+			if _, err := conn.Read(buffer); err != nil {
+				prepared.observer.close()
+				return
+			}
+		}
+	}()
 	deliverObservations(conn, prepared.observer)
 	if value, held := d.registry.byPane(prepared.request.PaneID); held {
 		value.removeObserver(prepared.observer)
@@ -454,11 +474,6 @@ func (d *daemon) open(args map[string]json.RawMessage) (string, any, error) {
 	if err := request.Validate(); err != nil {
 		return "ARGUMENT", nil, err
 	}
-	// A pane that already holds a session is answered with it rather than given a second shell. Two
-	// shells behind one pane is a shell nobody can reach and nobody reaps.
-	if existing, held := d.registry.byPane(request.PaneID); held && request.PaneID != "" {
-		return "", opened(existing, false), nil
-	}
 	var prepared *preparedObserver
 	if request.ObserverToken != "" {
 		d.observerMu.Lock()
@@ -474,6 +489,15 @@ func (d *daemon) open(args map[string]json.RawMessage) (string, any, error) {
 		if prepared == nil {
 			return "OBSERVER_NOT_READY", nil, fmt.Errorf("observer token is absent, unready, or bound to another terminal key")
 		}
+	}
+	// A pane that already holds a session is answered with it rather than given a second shell. Two
+	// shells behind one pane is a shell nobody can reach and nobody reaps. An observer named on that
+	// call attaches to the running session — dropping it silently starves the caller of every frame.
+	if existing, held := d.registry.byPane(request.PaneID); held && request.PaneID != "" {
+		if prepared != nil {
+			existing.adoptObserver(request.ObserverToken, prepared)
+		}
+		return "", opened(existing, false), nil
 	}
 	value, err := d.registry.openWithObserver(request, prepared)
 	if err != nil {
