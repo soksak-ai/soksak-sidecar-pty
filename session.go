@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"sync"
 
@@ -75,10 +77,26 @@ type registry struct {
 
 const defaultAbandonAfter = 30 * time.Minute
 
+// randomGenerationSeed draws the instance's generation floor. Randomness
+// rather than the clock: two instances created in the same nanosecond are the
+// same seed, and the tests meet exactly that.
+func randomGenerationSeed() uint64 {
+	var bytes [8]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return uint64(time.Now().UnixNano())
+	}
+	return binary.BigEndian.Uint64(bytes[:])
+}
+
 func newRegistry(shell string) *registry {
 	return &registry{
 		sessions: make(map[uint64]*session), shell: shell,
 		abandonAfter: defaultAbandonAfter, now: time.Now,
+		// The generation space is seeded per daemon instance. A counter that
+		// started at zero every boot handed the same generation to the same
+		// pane on every restart, and a screen archived under it stood back up
+		// under a shell it never belonged to.
+		generation: randomGenerationSeed(),
 	}
 }
 

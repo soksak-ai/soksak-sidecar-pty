@@ -54,3 +54,14 @@ func TestAdoptObserverAttachesToTheRunningSessionAtItsCurrentCoordinates(t *test
 		t.Fatalf("adopted observer missed the pumped bytes: %#v", output)
 	}
 }
+
+// Two daemon instances never share a generation space: a screen archived under
+// one boot's shell must not match a different boot's shell that happened to be
+// opened in the same order.
+func TestGenerationsDifferAcrossRegistryInstances(t *testing.T) {
+	first := newRegistry("/bin/sh")
+	second := newRegistry("/bin/sh")
+	if first.generation == second.generation {
+		t.Fatalf("two registries started at the same generation %d", first.generation)
+	}
+}
