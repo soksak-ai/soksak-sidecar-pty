@@ -1,9 +1,11 @@
 {
   "id": "soksak-sidecar-pty",
-  "version": "0.0.12",
-  "interface": {
-    "id": "soksak-spec-sidecar-pty",
-    "version": "0.0.2"
-  },
+  "version": "0.0.13",
+  "interface": [
+    {
+      "id": "soksak-spec-sidecar-pty",
+      "version": "0.0.2"
+    }
+  ],
   "process": "dist/soksak-sidecar-pty"
 }
