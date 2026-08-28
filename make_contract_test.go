@@ -38,6 +38,17 @@ func TestMakeOwnsEveryPTYBuildEntrypoint(t *testing.T) {
 	}
 }
 
+func TestPTYBuildStopsBeforeReadinessWhenAnyStepFails(t *testing.T) {
+	body, err := os.ReadFile("Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	if !strings.Contains(source, "build: prepare\n\t@set -eu;") {
+		t.Fatal("build recipe does not stop on the first failed build, chmod, rename, or verification step")
+	}
+}
+
 func TestPTYWorkflowsProjectOwnerMetadataIntoMake(t *testing.T) {
 	release := readWorkflow(t, ".github/workflows/release.yml")
 	for _, required := range []string{
