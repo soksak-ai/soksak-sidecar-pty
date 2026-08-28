@@ -39,7 +39,7 @@ func main() {
 	if err != nil {
 		fail("PROCESS_LABEL_INVALID: " + err.Error())
 	}
-	processName, err := controlwire.FormatProcessName(processLabel, "pty")
+	processName, err := controlwire.FormatProcessName(processLabel, "sidecar-pty")
 	if err != nil {
 		fail("PROCESS_NAME_INVALID: " + err.Error())
 	}
