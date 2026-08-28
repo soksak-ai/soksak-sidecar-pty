@@ -10,7 +10,7 @@ func TestProcessLabelEnvironmentIsValidated(t *testing.T) {
 	}{
 		{value: "", want: "soksak", ok: true},
 		{value: "soksakv3", want: "soksakv3", ok: true},
-		{value: "manual-v3_2.1", want: "manual-v3_2.1", ok: true},
+		{value: "manual-v3_2", want: "manual-v3_2", ok: true},
 		{value: " leading", ok: false},
 		{value: "slash/name", ok: false},
 	}

@@ -26,11 +26,11 @@ import (
 	"unsafe"
 )
 
-func applyPlatformProcessName(label string) error {
-	if len(label) == 0 || len(label) > 31 {
-		return fmt.Errorf("Darwin process label has %d bytes; want 1 through 31", len(label))
+func applyPlatformProcessName(processName string) error {
+	if len(processName) == 0 || len(processName) > 31 {
+		return fmt.Errorf("Darwin process name has %d bytes; want 1 through 31", len(processName))
 	}
-	name := C.CString(label)
+	name := C.CString(processName)
 	defer C.free(unsafe.Pointer(name))
 	if C.soksak_apply_process_name(name) == 0 {
 		return fmt.Errorf("setprogname could not retain the process label")
@@ -39,8 +39,8 @@ func applyPlatformProcessName(label string) error {
 	if err != nil {
 		return err
 	}
-	if actual != label {
-		return fmt.Errorf("Darwin process name = %q, want %q", actual, label)
+	if actual != processName {
+		return fmt.Errorf("Darwin process name = %q, want %q", actual, processName)
 	}
 	return nil
 }
