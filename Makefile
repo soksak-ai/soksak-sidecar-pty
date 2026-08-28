@@ -1,7 +1,7 @@
 SHELL := /bin/sh
 OUT ?= dist
 BUILD_ROOT ?= target
-SDK_VERSION := 0.0.13
+SDK_VERSION := 0.0.14
 
 .PHONY: require-target preflight lock prepare build stage verify require-tooling require-out release attest
 
