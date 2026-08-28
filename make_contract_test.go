@@ -73,6 +73,9 @@ func TestPTYMakeOwnsVerifiedReleaseOutput(t *testing.T) {
 			t.Errorf("PTY Makefile omits verified release boundary %q", required)
 		}
 	}
+	if !strings.Contains(source, `go env GOVERSION | sed 's/^go//'`) {
+		t.Error("PTY attestation does not project Go's numeric SemVer")
+	}
 }
 
 func TestPTYWorkflowsProjectOwnerMetadataIntoMake(t *testing.T) {
