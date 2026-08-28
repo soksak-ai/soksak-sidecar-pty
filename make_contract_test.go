@@ -58,6 +58,23 @@ func TestPTYBuildStopsBeforeReadinessWhenAnyStepFails(t *testing.T) {
 	}
 }
 
+func TestPTYMakeOwnsVerifiedReleaseOutput(t *testing.T) {
+	body, err := os.ReadFile("Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	for _, required := range []string{
+		"require-tooling:", "require-out:", "release:", "attest:",
+		"soksak-sdk pack-target", "soksak-sdk package", "soksak-sdk attest",
+		"release source checkout must be clean",
+	} {
+		if !strings.Contains(source, required) {
+			t.Errorf("PTY Makefile omits verified release boundary %q", required)
+		}
+	}
+}
+
 func TestPTYWorkflowsProjectOwnerMetadataIntoMake(t *testing.T) {
 	release := readWorkflow(t, ".github/workflows/release.yml")
 	for _, required := range []string{
