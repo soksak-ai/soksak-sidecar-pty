@@ -2,8 +2,8 @@ github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERo
 github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
-github.com/soksak-ai/soksak-contract-control v0.0.0-20260828142019-391437775cd9 h1:ONXzjffNT/phgjOK//N5l7ZhBzdkgYv5rKZp2KnVAvs=
-github.com/soksak-ai/soksak-contract-control v0.0.0-20260828142019-391437775cd9/go.mod h1:attu3HRIL9ErRVPXHEj20rrsPswUyqH53HEMd7qXyWw=
+github.com/soksak-ai/soksak-contract-control v0.0.0-20260828150033-44c52e0e5436 h1:B1r0biCScd6/K4OYG7HThx0Yz75ETk0C3wJbMi1FFRU=
+github.com/soksak-ai/soksak-contract-control v0.0.0-20260828150033-44c52e0e5436/go.mod h1:attu3HRIL9ErRVPXHEj20rrsPswUyqH53HEMd7qXyWw=
 github.com/soksak-ai/soksak-contract-pty v0.0.0-20260826064645-b2cedbca1cfa h1:VEROFEbyBqjrJKKJ0EutFBHmXMOK3cCDwnZhMgFUtOc=
 github.com/soksak-ai/soksak-contract-pty v0.0.0-20260826064645-b2cedbca1cfa/go.mod h1:u591ly839/wznZbPb/yeWSbSvK22MFujozhchwp0oa4=
 golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
