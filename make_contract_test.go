@@ -17,7 +17,7 @@ func TestMakeOwnsEveryPTYBuildEntrypoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	buildContract := source + string(resolver)
-	for _, target := range []string{"preflight:", "prepare:", "build:", "stage:", "verify:"} {
+	for _, target := range []string{"preflight:", "lock:", "prepare:", "build:", "stage:", "verify:"} {
 		if !strings.Contains(buildContract, target) {
 			t.Errorf("Makefile omits %s", target)
 		}
@@ -47,8 +47,14 @@ func TestPTYBuildStopsBeforeReadinessWhenAnyStepFails(t *testing.T) {
 	if !strings.Contains(source, "build: prepare\n\t@set -eu;") {
 		t.Fatal("build recipe does not stop on the first failed build, chmod, rename, or verification step")
 	}
-	if !strings.Contains(source, "CGO_ENABLED=0 GOOS=$$goos") {
-		t.Error("PTY release must remain a cgo-free cross-platform binary")
+	for _, required := range []string{
+		`cgo=0; test "$$goos" != darwin || cgo=1`,
+		"CGO_ENABLED=$$cgo GOOS=$$goos GOARCH=$$goarch",
+		`grep -F "CGO_ENABLED=$$cgo"`,
+	} {
+		if !strings.Contains(source, required) {
+			t.Errorf("PTY release does not prove its target-specific cgo policy through %s", required)
+		}
 	}
 }
 
