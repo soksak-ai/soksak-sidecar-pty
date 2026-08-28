@@ -77,4 +77,4 @@ attest: require-tooling require-out release
 		platform="$$(node -p 'process.platform')"; architecture="$$(node -p 'process.arch')"; \
 		soksak-sdk attest --release-dir "$(OUT)" --spec-root "$$tooling_root/.dependencies/soksak-spec" --tooling-release "$$tooling_root/release.json" \
 		--mode native --platform "$$platform" --architecture "$$architecture" \
-		--tool "go=$$(go version | awk '{print $$3}')" --tool "node=$$(node -p 'process.versions.node')"
+		--tool "go=$$(go env GOVERSION | sed 's/^go//')" --tool "node=$$(node -p 'process.versions.node')"
