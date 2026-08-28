@@ -15,7 +15,7 @@ prepare: preflight
 	@go mod verify
 
 build: prepare
-	@set -- $$(scripts/resolve-target.sh '$(TARGET)'); \
+	@set -eu; set -- $$(scripts/resolve-target.sh '$(TARGET)'); \
 		goos=$$1; goarch=$$2; extension=$$3; test "$$extension" != none || extension=; \
 		output='$(BUILD_ROOT)/$(TARGET)/release/soksak-sidecar-pty'$$extension; \
 		mkdir -p "$$(dirname "$$output")"; \

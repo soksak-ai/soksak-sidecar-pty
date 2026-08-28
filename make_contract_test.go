@@ -47,6 +47,9 @@ func TestPTYBuildStopsBeforeReadinessWhenAnyStepFails(t *testing.T) {
 	if !strings.Contains(source, "build: prepare\n\t@set -eu;") {
 		t.Fatal("build recipe does not stop on the first failed build, chmod, rename, or verification step")
 	}
+	if !strings.Contains(source, "CGO_ENABLED=0 GOOS=$$goos") {
+		t.Error("PTY release must remain a cgo-free cross-platform binary")
+	}
 }
 
 func TestPTYWorkflowsProjectOwnerMetadataIntoMake(t *testing.T) {
