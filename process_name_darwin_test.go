@@ -48,7 +48,7 @@ func TestDarwinDaemonPublishesTheAcceptedProcessLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if name != "soksakv3" {
-		t.Fatalf("Darwin process name = %q, want accepted process label %q", name, "soksakv3")
+	if name != "soksakv3-pty" {
+		t.Fatalf("Darwin process name = %q, want project and Sidecar role %q", name, "soksakv3-pty")
 	}
 }
