@@ -46,7 +46,7 @@ func TestSidecarManifestUsesCanonicalFields(t *testing.T) {
 	if err := json.Unmarshal(body, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{"id": true, "version": true, "interface": true, "process": true}
+	want := map[string]bool{"id": true, "version": true, "processRole": true, "interface": true, "process": true}
 	if len(manifest) != len(want) {
 		t.Fatalf("manifest fields=%v", manifest)
 	}

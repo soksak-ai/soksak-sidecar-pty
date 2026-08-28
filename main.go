@@ -39,14 +39,6 @@ func main() {
 	if err != nil {
 		fail("PROCESS_LABEL_INVALID: " + err.Error())
 	}
-	processName, err := controlwire.FormatProcessName(processLabel, "sidecar-pty")
-	if err != nil {
-		fail("PROCESS_NAME_INVALID: " + err.Error())
-	}
-	if err := applyPlatformProcessName(processName); err != nil {
-		fail("PROCESS_NAME_INVALID: " + err.Error())
-	}
-
 	if *home == "" {
 		fail("no home was named. Every socket, the token and the sessions derive from it, and this " +
 			"daemon derives none of it for itself: pass -home <path>")
