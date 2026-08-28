@@ -2,13 +2,16 @@ SHELL := /bin/sh
 OUT ?= dist
 BUILD_ROOT ?= target
 
-.PHONY: require-target preflight prepare build stage verify
+.PHONY: require-target preflight lock prepare build stage verify
 
 require-target:
 	@test '$(origin TARGET)' = 'command line' && test -n '$(TARGET)' || { echo 'TARGET must be an explicit Make command-line variable' >&2; exit 2; }
 
 preflight: require-target
 	@scripts/check-build-environment.sh '$(TARGET)'
+
+lock: preflight
+	@go mod tidy
 
 prepare: preflight
 	@GOFLAGS=-mod=readonly go mod download
@@ -17,15 +20,17 @@ prepare: preflight
 build: prepare
 	@set -eu; set -- $$(scripts/resolve-target.sh '$(TARGET)'); \
 		goos=$$1; goarch=$$2; extension=$$3; test "$$extension" != none || extension=; \
+		cgo=0; test "$$goos" != darwin || cgo=1; \
 		output='$(BUILD_ROOT)/$(TARGET)/release/soksak-sidecar-pty'$$extension; \
 		mkdir -p "$$(dirname "$$output")"; \
 		next=$$output.next.$$$$; \
 		trap 'rm -f "$$next"' EXIT HUP INT TERM; \
-		CGO_ENABLED=0 GOOS=$$goos GOARCH=$$goarch go build -mod=readonly -trimpath -buildvcs=false -o "$$next" .; \
+		CGO_ENABLED=$$cgo GOOS=$$goos GOARCH=$$goarch go build -mod=readonly -trimpath -buildvcs=false -o "$$next" .; \
 		chmod +x "$$next"; \
 		mv -f "$$next" "$$output"; \
 		go version -m "$$output" | grep -F "GOOS=$$goos" >/dev/null; \
 		go version -m "$$output" | grep -F "GOARCH=$$goarch" >/dev/null; \
+		go version -m "$$output" | grep -F "CGO_ENABLED=$$cgo" >/dev/null; \
 		printf 'PTY_BUILD_READY target=%s output=%s\n' '$(TARGET)' "$$output"
 
 stage: build
