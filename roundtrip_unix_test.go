@@ -48,6 +48,7 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 		shell = "/bin/sh"
 	}
 	daemon := exec.Command(binary, "-home", home, "-runtime", runtimeRoot, "-shell", shell)
+	daemon.Env = append(os.Environ(), "SOKSAK_PROCESS_LABEL=soksakv3")
 	stdout, pipeErr := daemon.StdoutPipe()
 	if pipeErr != nil {
 		t.Fatal(pipeErr)
@@ -76,6 +77,9 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 	if announced.Socket == nil || *announced.Socket != ptycontract.ControlSocketPath(runtimeRoot, false) {
 		t.Fatalf("the announcement names %v, the contract derives %q", announced.Socket, ptycontract.ControlSocketPath(runtimeRoot, false))
 	}
+	if announced.ProcessLabel == nil || *announced.ProcessLabel != "soksakv3" {
+		t.Fatalf("announcement process label = %v", announced.ProcessLabel)
+	}
 
 	token, err := os.ReadFile(ptycontract.TokenPath(runtimeRoot))
 	if err != nil {
@@ -97,6 +101,12 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 	}
 	if answer := next(t, read); !answer.Ok {
 		t.Fatalf("the greeting was refused: %s", answer.Error)
+	} else {
+		body, _ := json.Marshal(answer.Result)
+		var greeting controlwire.Greeting
+		if json.Unmarshal(body, &greeting) != nil || greeting.ProcessLabel != "soksakv3" {
+			t.Fatalf("greeting process label = %q", greeting.ProcessLabel)
+		}
 	}
 
 	if err := send.Encode(request("open", ptycontract.CommandOpen, map[string]any{

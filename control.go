@@ -31,6 +31,7 @@ type daemon struct {
 	token            string
 	home             string
 	identity         string
+	processLabel     string
 	leaseMu          sync.Mutex
 	leases           map[string]uint64
 	observerMu       sync.Mutex
@@ -431,11 +432,12 @@ func (d *daemon) greet(request controlwire.Request, greeted *bool) controlwire.R
 	return controlwire.Response{
 		ID: request.ID, Ok: true,
 		Result: controlwire.Greeting{
-			Protocol:  controlwire.Protocol,
-			Identity:  d.identity,
-			Commands:  table,
-			Language:  "en",
-			Languages: []string{"en"},
+			Protocol:     controlwire.Protocol,
+			Identity:     d.identity,
+			ProcessLabel: d.processLabel,
+			Commands:     table,
+			Language:     "en",
+			Languages:    []string{"en"},
 		},
 	}
 }

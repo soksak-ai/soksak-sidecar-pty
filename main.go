@@ -35,6 +35,10 @@ func main() {
 	runtimeRoot := flag.String("runtime", "", "the identity runtime root for sockets and tokens")
 	shell := flag.String("shell", "", "the shell a session runs when the caller names none")
 	flag.Parse()
+	processLabel, err := processLabelFromEnvironment(os.Getenv(controlwire.ProcessLabelEnvironment))
+	if err != nil {
+		fail("PROCESS_LABEL_INVALID: " + err.Error())
+	}
 
 	if *home == "" {
 		fail("no home was named. Every socket, the token and the sessions derive from it, and this " +
@@ -43,7 +47,7 @@ func main() {
 	if *runtimeRoot == "" || !filepath.IsAbs(*runtimeRoot) {
 		fail("-runtime requires an absolute identity runtime root")
 	}
-	if err := run(*home, *runtimeRoot, *shell); err != nil {
+	if err := run(*home, *runtimeRoot, *shell, processLabel); err != nil {
 		fail(err.Error())
 	}
 }
@@ -53,7 +57,7 @@ func fail(message string) {
 	os.Exit(1)
 }
 
-func run(home, runtimeRoot, shell string) error {
+func run(home, runtimeRoot, shell, processLabel string) error {
 	runDirectory := runtimeRoot
 	if err := os.MkdirAll(runDirectory, 0o700); err != nil {
 		return fmt.Errorf("preparing %s: %w", runDirectory, err)
@@ -64,7 +68,7 @@ func run(home, runtimeRoot, shell string) error {
 		return err
 	}
 
-	d := &daemon{registry: newRegistry(shell), token: token, home: home, identity: ptycontract.SidecarName}
+	d := &daemon{registry: newRegistry(shell), token: token, home: home, identity: ptycontract.SidecarName, processLabel: processLabel}
 
 	// One socket. A stream is a connection that stopped being request and response, not a second
 	// place — and a second address would be a second thing every peer derives, a second bind to get
@@ -85,7 +89,7 @@ func run(home, runtimeRoot, shell string) error {
 	// daemon and is the only one that needs to be told. Every other peer derives the token's path
 	// from the home, which is what the file is for.
 	announcement, err := json.Marshal(
-		controlwire.NewAnnouncement(controlAddress).WithToken(token))
+		controlwire.NewAnnouncement(controlAddress, processLabel).WithToken(token))
 	if err != nil {
 		return err
 	}
