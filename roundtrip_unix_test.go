@@ -48,7 +48,7 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 		shell = "/bin/sh"
 	}
 	daemon := exec.Command(binary, "-home", home, "-runtime", runtimeRoot, "-shell", shell)
-	daemon.Env = append(os.Environ(), "SOKSAK_PROCESS_LABEL=soksakv3")
+	daemon.Env = append(os.Environ(), "SOKSAK_PROCESS_LABEL=soksakv3", "SOKSAK_SIDECAR_NAME=soksakv3-sidecar-pty")
 	stdout, pipeErr := daemon.StdoutPipe()
 	if pipeErr != nil {
 		t.Fatal(pipeErr)
@@ -74,14 +74,14 @@ func TestAShellRunsAndTheDaemonSaysWhenItIsReady(t *testing.T) {
 	if announced.Protocol == nil || *announced.Protocol != controlwire.Protocol {
 		t.Fatalf("the announcement names protocol %v, this build speaks %d", announced.Protocol, controlwire.Protocol)
 	}
-	if announced.Socket == nil || *announced.Socket != ptycontract.ControlSocketPath(runtimeRoot, false) {
-		t.Fatalf("the announcement names %v, the contract derives %q", announced.Socket, ptycontract.ControlSocketPath(runtimeRoot, false))
+	if announced.Socket == nil || *announced.Socket != ptycontract.ControlSocketPath(runtimeRoot, "soksakv3-sidecar-pty", false) {
+		t.Fatalf("the announcement names %v, the contract derives %q", announced.Socket, ptycontract.ControlSocketPath(runtimeRoot, "soksakv3-sidecar-pty", false))
 	}
 	if announced.ProcessLabel == nil || *announced.ProcessLabel != "soksakv3" {
 		t.Fatalf("announcement process label = %v", announced.ProcessLabel)
 	}
 
-	token, err := os.ReadFile(ptycontract.TokenPath(runtimeRoot))
+	token, err := os.ReadFile(ptycontract.TokenPath(runtimeRoot, "soksakv3-sidecar-pty"))
 	if err != nil {
 		t.Fatalf("reading the token the daemon issued: %v", err)
 	}

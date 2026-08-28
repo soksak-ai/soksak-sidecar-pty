@@ -39,6 +39,10 @@ func main() {
 	if err != nil {
 		fail("PROCESS_LABEL_INVALID: " + err.Error())
 	}
+	sidecarName, err := controlwire.ParseProcessLabel(os.Getenv(controlwire.SidecarNameEnvironment))
+	if err != nil {
+		fail("SIDECAR_NAME_INVALID: " + err.Error())
+	}
 	if *home == "" {
 		fail("no home was named. Every socket, the token and the sessions derive from it, and this " +
 			"daemon derives none of it for itself: pass -home <path>")
@@ -46,7 +50,7 @@ func main() {
 	if *runtimeRoot == "" || !filepath.IsAbs(*runtimeRoot) {
 		fail("-runtime requires an absolute identity runtime root")
 	}
-	if err := run(*home, *runtimeRoot, *shell, processLabel); err != nil {
+	if err := run(*home, *runtimeRoot, *shell, processLabel, sidecarName); err != nil {
 		fail(err.Error())
 	}
 }
@@ -56,13 +60,13 @@ func fail(message string) {
 	os.Exit(1)
 }
 
-func run(home, runtimeRoot, shell, processLabel string) error {
+func run(home, runtimeRoot, shell, processLabel, sidecarName string) error {
 	runDirectory := runtimeRoot
 	if err := os.MkdirAll(runDirectory, 0o700); err != nil {
 		return fmt.Errorf("preparing %s: %w", runDirectory, err)
 	}
 
-	token, err := loadOrCreateToken(ptycontract.TokenPath(runtimeRoot))
+	token, err := loadOrCreateToken(ptycontract.TokenPath(runtimeRoot, sidecarName))
 	if err != nil {
 		return err
 	}
@@ -72,7 +76,7 @@ func run(home, runtimeRoot, shell, processLabel string) error {
 	// One socket. A stream is a connection that stopped being request and response, not a second
 	// place — and a second address would be a second thing every peer derives, a second bind to get
 	// right, and a state where one is up and the other is not.
-	controlAddress := ptycontract.ControlSocketPath(runtimeRoot, runtime.GOOS == "windows")
+	controlAddress := ptycontract.ControlSocketPath(runtimeRoot, sidecarName, runtime.GOOS == "windows")
 	control, err := listen(controlAddress)
 	if err != nil {
 		return err
