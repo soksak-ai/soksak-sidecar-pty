@@ -26,7 +26,7 @@ func (unixProcessTreeReader) Descendants(root uint32) ([]processTreeEntry, error
 	}
 	type row struct {
 		pid, parent uint32
-		command    string
+		command     string
 	}
 	children := make(map[uint32][]row)
 	rootSeen := false
