@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
+	"net"
 	"testing"
 	"time"
 
+	controlwire "github.com/soksak-ai/soksak-contract-control"
 	ptycontract "github.com/soksak-ai/soksak-contract-pty"
 )
 
@@ -33,6 +36,42 @@ func TestProcessInventoryReportsOnlyExplicitlyOwnedPTYSessions(t *testing.T) {
 	if process.Owner != d.identity || process.Window == nil || *process.Window != window || process.Pane == nil || *process.Pane != pane || process.State != "running" {
 		t.Fatalf("process=%+v", process)
 	}
+}
+
+func TestProcessObserveStreamsOwnerEventsAfterInitialSnapshot(t *testing.T) {
+	registry := newRegistry("/bin/sh")
+	value := &session{id: 7, paneID: "pane-1", command: "/bin/zsh -l", startedAt: time.UnixMilli(1_700_000_000_000), process: &resizeProcess{}, ring: newRing(16), observers: map[*observer]struct{}{}, observerTokens: map[string]*observer{}, displaying: map[*observer]struct{}{}}
+	registry.sessions[value.id] = value
+	registry.processRevision = 3
+	d := &daemon{registry: registry, identity: ptycontract.SidecarName}
+	server, client := net.Pipe()
+	done := make(chan struct{})
+	go func() { d.processObserve(server, json.NewEncoder(server)); close(done) }()
+	reader := bufio.NewReader(client)
+	initial, err := reader.ReadBytes('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response controlwire.Response
+	if err := json.Unmarshal(initial, &response); err != nil || !response.Ok {
+		t.Fatalf("initial=%s response=%+v err=%v", initial, response, err)
+	}
+	endedAt := int64(1_700_000_001_000)
+	registry.processRevision = 4
+	d.emitProcess("ended", value, &endedAt)
+	eventLine, err := reader.ReadBytes('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	var event ptycontract.ProcessEvent
+	if err := json.Unmarshal(eventLine, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.Revision != 4 || event.Kind != "ended" || event.Process.State != "ended" || event.Process.EndedAtUnixMs == nil {
+		t.Fatalf("event=%+v", event)
+	}
+	_ = client.Close()
+	<-done
 }
 
 // A request the contract refuses never reaches the registry, so no shell is started for it.

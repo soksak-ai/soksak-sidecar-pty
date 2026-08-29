@@ -38,6 +38,8 @@ type daemon struct {
 	leases           map[string]uint64
 	observerMu       sync.Mutex
 	pendingObservers map[string]*preparedObserver
+	processMu        sync.Mutex
+	processObservers map[chan ptycontract.ProcessEvent]struct{}
 }
 
 type preparedObserver struct {
@@ -126,12 +128,14 @@ func (d *daemon) serveControl(conn net.Conn) {
 		// An attach turns this connection into a stream. It answers on the envelope like anything
 		// else and then stops being request and response, which is why it is handled here rather
 		// than on a socket of its own: a stream is a connection that changed, not a different place.
-		if request.Command == ptycontract.CommandAttach || request.Command == ptycontract.CommandAttachLease || request.Command == ptycontract.CommandObserve || request.Command == ptycontract.CommandObservePrepared {
+		if request.Command == ptycontract.CommandAttach || request.Command == ptycontract.CommandAttachLease || request.Command == ptycontract.CommandObserve || request.Command == ptycontract.CommandObservePrepared || request.Command == ptycontract.CommandProcessObserve {
 			if !greeted {
 				_ = writer.Encode(refusal(request, "GREETING", "this connection has not agreed a protocol"))
 				return
 			}
-			if request.Command == ptycontract.CommandAttach {
+			if request.Command == ptycontract.CommandProcessObserve {
+				d.processObserve(conn, writer)
+			} else if request.Command == ptycontract.CommandAttach {
 				d.attach(conn, writer, request)
 			} else if request.Command == ptycontract.CommandAttachLease {
 				d.attachLease(conn, writer, request)
@@ -508,6 +512,7 @@ func (d *daemon) open(args map[string]json.RawMessage) (string, any, error) {
 	if err != nil {
 		return "OPEN", nil, err
 	}
+	d.emitProcess("started", value, nil)
 	return "", opened(value, true), nil
 }
 
@@ -570,9 +575,15 @@ func (d *daemon) closeSession(args map[string]json.RawMessage) (string, any, err
 	if err != nil {
 		return "ARGUMENT", nil, err
 	}
+	value, err := d.registry.get(request.Session)
+	if err != nil {
+		return "NO_SESSION", nil, err
+	}
+	endedAt := time.Now().UnixMilli()
 	if err := d.registry.close(request.Session); err != nil {
 		return "NO_SESSION", nil, err
 	}
+	d.emitProcess("ended", value, &endedAt)
 	return "", request, nil
 }
 
@@ -585,16 +596,80 @@ func (d *daemon) processInventory(map[string]json.RawMessage) (string, any, erro
 	revision := d.registry.processRevision
 	processes := make([]ptycontract.Process, 0, len(d.registry.sessions))
 	for _, value := range d.registry.sessions {
-		processes = append(processes, ptycontract.Process{
-			ID: fmt.Sprintf("pty-session-%d", value.id), Owner: d.identity,
-			Window: optionalString(value.windowLabel), Pane: optionalString(value.paneID),
-			PID: value.process.PID(), ParentPID: uint32(os.Getpid()),
-			Command: value.command, State: "running", StartedAtUnixMs: value.startedAt.UnixMilli(),
-		})
+		processes = append(processes, d.processRecord(value, "running", nil))
 	}
 	d.registry.mu.Unlock()
 	sort.Slice(processes, func(i, j int) bool { return processes[i].ID < processes[j].ID })
 	return "", ptycontract.ProcessInventory{Revision: revision, Processes: processes}, nil
+}
+
+func (d *daemon) processRecord(value *session, state string, endedAt *int64) ptycontract.Process {
+	return ptycontract.Process{
+		ID: fmt.Sprintf("pty-session-%d", value.id), Owner: d.identity,
+		Window: optionalString(value.windowLabel), Pane: optionalString(value.paneID),
+		PID: value.process.PID(), ParentPID: uint32(os.Getpid()),
+		Command: value.command, State: state, StartedAtUnixMs: value.startedAt.UnixMilli(), EndedAtUnixMs: endedAt,
+	}
+}
+
+func (d *daemon) processObserve(conn net.Conn, writer *json.Encoder) {
+	events := make(chan ptycontract.ProcessEvent, 32)
+	var closeOnce sync.Once
+	d.processMu.Lock()
+	if d.processObservers == nil {
+		d.processObservers = make(map[chan ptycontract.ProcessEvent]struct{})
+	}
+	d.processObservers[events] = struct{}{}
+	d.processMu.Unlock()
+	closeEvents := func() {
+		closeOnce.Do(func() {
+			d.processMu.Lock()
+			delete(d.processObservers, events)
+			close(events)
+			d.processMu.Unlock()
+		})
+	}
+	defer closeEvents()
+	// The stream has no inbound payload after the request. Reading only to observe the peer close
+	// gives the writer an event-driven lifetime; without it, a client that disconnects after an
+	// event leaves this goroutine and its observer channel alive forever.
+	go func() {
+		var one [1]byte
+		_, _ = conn.Read(one[:])
+		closeEvents()
+	}()
+	_, snapshot, err := d.processInventory(nil)
+	if err != nil {
+		_ = writer.Encode(controlwire.Response{Ok: false, Error: err.Error()})
+		return
+	}
+	if err := writer.Encode(controlwire.Response{Ok: true, Result: controlwire.Answer{Code: "OK", Data: snapshot}}); err != nil {
+		return
+	}
+	for event := range events {
+		if err := writer.Encode(event); err != nil {
+			return
+		}
+	}
+}
+
+func (d *daemon) emitProcess(kind string, value *session, endedAt *int64) {
+	d.registry.mu.Lock()
+	revision := d.registry.processRevision
+	d.registry.mu.Unlock()
+	state := "ended"
+	if kind == "started" {
+		state = "running"
+	}
+	event := ptycontract.ProcessEvent{Revision: revision, Kind: kind, Process: d.processRecord(value, state, endedAt)}
+	d.processMu.Lock()
+	defer d.processMu.Unlock()
+	for observer := range d.processObservers {
+		select {
+		case observer <- event:
+		default:
+		}
+	}
 }
 
 func optionalString(value string) *string {
