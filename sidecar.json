@@ -1,6 +1,6 @@
 {
   "id": "soksak-sidecar-pty",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "processRole": "sidecar-pty",
   "interface": [
     {
