@@ -20,7 +20,7 @@ type sessionProcess interface {
 	Close() error
 }
 
-// processTreeReader reports descendants of one process group. It is injected at the daemon
+// processTreeReader reports descendants of one process. It is injected at the daemon
 // boundary so the inventory contract can be tested without reading another process's source or
 // making a test depend on the host process table.
 type processTreeReader interface {
