@@ -629,7 +629,10 @@ func (d *daemon) processObserve(conn net.Conn, writer *json.Encoder) {
 			d.processMu.Unlock()
 		})
 	}
-	defer closeEvents()
+	defer func() {
+		closeEvents()
+		_ = conn.Close()
+	}()
 	// The stream has no inbound payload after the request. Reading only to observe the peer close
 	// gives the writer an event-driven lifetime; without it, a client that disconnects after an
 	// event leaves this goroutine and its observer channel alive forever.
