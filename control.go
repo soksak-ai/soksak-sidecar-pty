@@ -40,6 +40,7 @@ type daemon struct {
 	pendingObservers map[string]*preparedObserver
 	processMu        sync.Mutex
 	processObservers map[chan ptycontract.ProcessEvent]struct{}
+	processTree      processTreeReader
 }
 
 type preparedObserver struct {
@@ -594,13 +595,36 @@ func (d *daemon) sessions(map[string]json.RawMessage) (string, any, error) {
 func (d *daemon) processInventory(map[string]json.RawMessage) (string, any, error) {
 	d.registry.mu.Lock()
 	revision := d.registry.processRevision
-	processes := make([]ptycontract.Process, 0, len(d.registry.sessions))
+	sessions := make([]*session, 0, len(d.registry.sessions))
 	for _, value := range d.registry.sessions {
-		processes = append(processes, d.processRecord(value, "running", nil))
+		sessions = append(sessions, value)
 	}
 	d.registry.mu.Unlock()
+	processes := make([]ptycontract.Process, 0, len(sessions))
+	for _, value := range sessions {
+		processes = append(processes, d.processRecord(value, "running", nil))
+		if d.processTree == nil {
+			continue
+		}
+		descendants, err := d.processTree.Descendants(value.process.PID())
+		if err != nil {
+			return "PROCESS_TREE", nil, fmt.Errorf("session %d process tree: %w", value.id, err)
+		}
+		for _, child := range descendants {
+			processes = append(processes, d.descendantRecord(value, child))
+		}
+	}
 	sort.Slice(processes, func(i, j int) bool { return processes[i].ID < processes[j].ID })
 	return "", ptycontract.ProcessInventory{Revision: revision, Processes: processes}, nil
+}
+
+func (d *daemon) descendantRecord(session *session, child processTreeEntry) ptycontract.Process {
+	return ptycontract.Process{
+		ID: fmt.Sprintf("pty-session-%d-process-%d", session.id, child.PID), Owner: d.identity,
+		Window: optionalString(session.windowLabel), Pane: optionalString(session.paneID), CWD: child.CWD,
+		PID: child.PID, ParentPID: child.ParentPID, Command: child.Command, State: "running",
+		StartedAtUnixMs: session.startedAt.UnixMilli(),
+	}
 }
 
 func (d *daemon) processRecord(value *session, state string, endedAt *int64) ptycontract.Process {

@@ -20,6 +20,20 @@ type sessionProcess interface {
 	Close() error
 }
 
+// processTreeReader reports descendants of one process group. It is injected at the daemon
+// boundary so the inventory contract can be tested without reading another process's source or
+// making a test depend on the host process table.
+type processTreeReader interface {
+	Descendants(root uint32) ([]processTreeEntry, error)
+}
+
+type processTreeEntry struct {
+	PID       uint32
+	ParentPID uint32
+	Command   string
+	CWD       string
+}
+
 // session is one shell with a tty, its output ring, and what the caller told this daemon about it.
 //
 // PaneID and WindowLabel are opaque here. This daemon never resolves them, never groups by them and

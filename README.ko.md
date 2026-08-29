@@ -10,10 +10,11 @@
 상태는 각 PTY에 마지막으로 성공적으로 적용된 크기와 원본 이벤트 순서를 반환합니다.
 
 `process.inventory`는 프로세스 모니터가 읽는 소유자 snapshot입니다. 이 사이드카가 시작한 셸을
-owner, window, pane, pid, command, state, timestamp와 함께 명시적으로 반환합니다. 자식 프로세스
-`process.observe`는 초기 snapshot 뒤 하나의 연결을 유지하며 peer가 닫을 때까지 revision이 붙은
-`started`/`ended` record를 보냅니다. 자식 프로세스 전체와 updated event는 별도 gate이므로 이것만으로
-완성된 모니터라고 주장하지 않습니다.
+owner, window, pane, pid, command, state, timestamp와 함께 명시적으로 반환하고 Unix에서는 셸의
+조상 관계로 찾은 자식도 포함합니다. `process.observe`는 초기 snapshot 뒤 하나의 연결을 유지하며
+peer가 닫을 때까지 revision이 붙은 `started`/`ended` record를 보냅니다. Windows ConPTY job 열거와
+updated event는 별도 gate이므로 선택한 플랫폼의 소유권 범위가 구현되기 전에는 완성된 모니터라고
+주장하지 않습니다.
 
 세션의 렌더러는 하나이며, 마지막에 붙은 쪽입니다. 떼지 않고 사라진 실행이 표식을 남겼다고 해서 다음
 부착을 거부하면, 그 pane 은 다시는 아무것도 그릴 수 없습니다. 사라진 쪽은 더 낮은 세대를 들고 있으므로

@@ -38,6 +38,46 @@ func TestProcessInventoryReportsOnlyExplicitlyOwnedPTYSessions(t *testing.T) {
 	}
 }
 
+type fakeProcessTreeReader struct {
+	entries []processTreeEntry
+}
+
+func (reader fakeProcessTreeReader) Descendants(uint32) ([]processTreeEntry, error) {
+	return reader.entries, nil
+}
+
+func TestProcessInventoryIncludesOwnedDescendantsWithTheSameOwner(t *testing.T) {
+	started := time.UnixMilli(1_700_000_000_000)
+	registry := newRegistry("/bin/sh")
+	value := &session{
+		id: 7, paneID: "pane-1", command: "/bin/zsh -l", startedAt: started,
+		cwd: "/work", process: &resizeProcess{}, ring: newRing(16), observers: map[*observer]struct{}{},
+		observerTokens: map[string]*observer{}, displaying: map[*observer]struct{}{},
+	}
+	registry.sessions[value.id] = value
+	d := &daemon{registry: registry, identity: ptycontract.SidecarName, processTree: fakeProcessTreeReader{entries: []processTreeEntry{{
+		PID: 22, ParentPID: 1, Command: "worker --marker", CWD: "/work/pkg",
+	}}}}
+	_, raw, err := d.processInventory(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory := raw.(ptycontract.ProcessInventory)
+	if len(inventory.Processes) != 2 {
+		t.Fatalf("processes=%+v", inventory.Processes)
+	}
+	var child ptycontract.Process
+	for _, candidate := range inventory.Processes {
+		if candidate.ID == "pty-session-7-process-22" {
+			child = candidate
+			break
+		}
+	}
+	if child.ID != "pty-session-7-process-22" || child.Owner != d.identity || child.CWD != "/work/pkg" || child.ParentPID != 1 {
+		t.Fatalf("descendant=%+v", child)
+	}
+}
+
 func TestProcessObserveStreamsOwnerEventsAfterInitialSnapshot(t *testing.T) {
 	registry := newRegistry("/bin/sh")
 	value := &session{id: 7, paneID: "pane-1", command: "/bin/zsh -l", startedAt: time.UnixMilli(1_700_000_000_000), process: &resizeProcess{}, ring: newRing(16), observers: map[*observer]struct{}{}, observerTokens: map[string]*observer{}, displaying: map[*observer]struct{}{}}

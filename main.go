@@ -71,7 +71,7 @@ func run(home, runtimeRoot, shell, processLabel, sidecarName string) error {
 		return err
 	}
 
-	d := &daemon{registry: newRegistry(shell), token: token, home: home, identity: ptycontract.SidecarName, processLabel: processLabel}
+	d := &daemon{registry: newRegistry(shell), token: token, home: home, identity: ptycontract.SidecarName, processLabel: processLabel, processTree: newProcessTreeReader()}
 
 	// One socket. A stream is a connection that stopped being request and response, not a second
 	// place — and a second address would be a second thing every peer derives, a second bind to get
