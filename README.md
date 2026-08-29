@@ -15,6 +15,11 @@ attached, `fromSeq` is how a client that comes back says where it got to, and th
 watermarks bound what one unattended session can cost.
 Status reports the last size successfully applied to each PTY and its source event sequence.
 
+`process.inventory` is the owner-facing snapshot for the process monitor. It reports the shell
+session records this sidecar started with explicit owner, window, pane, pid, command, state and
+timestamps. Descendant coverage and live process events are separate gates; this snapshot alone is
+not a complete monitor.
+
 A session has one renderer: the last to attach. A run that went away without detaching left a mark,
 and refusing the next attach because of it would leave a pane nothing can ever draw again. The one
 that left holds an older generation, so its detach cannot take the one that replaced it.
