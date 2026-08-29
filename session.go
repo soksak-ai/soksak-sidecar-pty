@@ -29,6 +29,7 @@ type session struct {
 	id          uint64
 	paneID      string
 	windowLabel string
+	cwd         string
 	command     string
 	startedAt   time.Time
 	generation  uint64
@@ -151,6 +152,7 @@ func (reg *registry) openWithObserver(
 		id:             reg.next,
 		paneID:         request.PaneID,
 		windowLabel:    request.WindowLabel,
+		cwd:            request.CWD,
 		command:        shell + " -l",
 		startedAt:      reg.now(),
 		generation:     reg.generation,

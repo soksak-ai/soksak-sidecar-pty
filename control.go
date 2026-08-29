@@ -607,6 +607,7 @@ func (d *daemon) processRecord(value *session, state string, endedAt *int64) pty
 	return ptycontract.Process{
 		ID: fmt.Sprintf("pty-session-%d", value.id), Owner: d.identity,
 		Window: optionalString(value.windowLabel), Pane: optionalString(value.paneID),
+		CWD: value.cwd,
 		PID: value.process.PID(), ParentPID: uint32(os.Getpid()),
 		Command: value.command, State: state, StartedAtUnixMs: value.startedAt.UnixMilli(), EndedAtUnixMs: endedAt,
 	}
