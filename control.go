@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -49,20 +51,21 @@ type handler func(args map[string]json.RawMessage) (string, any, error)
 
 func (d *daemon) commands() map[string]handler {
 	return map[string]handler{
-		ptycontract.CommandOpen:            d.open,
-		ptycontract.CommandWrite:           d.write,
-		ptycontract.CommandResize:          d.resize,
-		ptycontract.CommandAck:             d.ack,
-		ptycontract.CommandClose:           d.closeSession,
-		ptycontract.CommandSessions:        d.sessions,
-		ptycontract.CommandPane:            d.pane,
-		ptycontract.CommandCloseWindow:     d.closeWindow,
-		ptycontract.CommandStatus:          d.status,
-		ptycontract.CommandLease:           d.lease,
-		ptycontract.CommandDetachRenderer:  d.detachRenderer,
-		ptycontract.CommandPrepareObserver: d.prepareObserver,
-		ptycontract.CommandDisplays:        d.displays,
-		"pty.observers":                    d.observers,
+		ptycontract.CommandOpen:             d.open,
+		ptycontract.CommandWrite:            d.write,
+		ptycontract.CommandResize:           d.resize,
+		ptycontract.CommandAck:              d.ack,
+		ptycontract.CommandClose:            d.closeSession,
+		ptycontract.CommandSessions:         d.sessions,
+		ptycontract.CommandPane:             d.pane,
+		ptycontract.CommandCloseWindow:      d.closeWindow,
+		ptycontract.CommandStatus:           d.status,
+		ptycontract.CommandLease:            d.lease,
+		ptycontract.CommandDetachRenderer:   d.detachRenderer,
+		ptycontract.CommandPrepareObserver:  d.prepareObserver,
+		ptycontract.CommandDisplays:         d.displays,
+		ptycontract.CommandProcessInventory: d.processInventory,
+		"pty.observers":                     d.observers,
 	}
 }
 
@@ -575,6 +578,30 @@ func (d *daemon) closeSession(args map[string]json.RawMessage) (string, any, err
 
 func (d *daemon) sessions(map[string]json.RawMessage) (string, any, error) {
 	return "", d.registry.list(), nil
+}
+
+func (d *daemon) processInventory(map[string]json.RawMessage) (string, any, error) {
+	d.registry.mu.Lock()
+	revision := d.registry.processRevision
+	processes := make([]ptycontract.Process, 0, len(d.registry.sessions))
+	for _, value := range d.registry.sessions {
+		processes = append(processes, ptycontract.Process{
+			ID: fmt.Sprintf("pty-session-%d", value.id), Owner: d.identity,
+			Window: optionalString(value.windowLabel), Pane: optionalString(value.paneID),
+			PID: value.process.PID(), ParentPID: uint32(os.Getpid()),
+			Command: value.command, State: "running", StartedAtUnixMs: value.startedAt.UnixMilli(),
+		})
+	}
+	d.registry.mu.Unlock()
+	sort.Slice(processes, func(i, j int) bool { return processes[i].ID < processes[j].ID })
+	return "", ptycontract.ProcessInventory{Revision: revision, Processes: processes}, nil
+}
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func (d *daemon) status(map[string]json.RawMessage) (string, any, error) {

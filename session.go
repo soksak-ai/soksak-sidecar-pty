@@ -29,6 +29,8 @@ type session struct {
 	id          uint64
 	paneID      string
 	windowLabel string
+	command     string
+	startedAt   time.Time
 	generation  uint64
 
 	process        sessionProcess
@@ -62,12 +64,13 @@ type session struct {
 }
 
 type registry struct {
-	mu         sync.Mutex
-	next       uint64
-	generation uint64
-	sessions   map[uint64]*session
-	shell      string
-	stopped    bool
+	mu              sync.Mutex
+	next            uint64
+	generation      uint64
+	processRevision uint64
+	sessions        map[uint64]*session
+	shell           string
+	stopped         bool
 	// A session with no renderer is kept this long so a view that unmounted can mount again and
 	// reattach. Past it the session is what a run that went away left behind, and it ends: nothing
 	// can reach that shell, and it holds a process, its output ring and its file descriptors.
@@ -143,10 +146,13 @@ func (reg *registry) openWithObserver(
 	}
 	reg.next++
 	reg.generation++
+	reg.processRevision++
 	value := &session{
 		id:             reg.next,
 		paneID:         request.PaneID,
 		windowLabel:    request.WindowLabel,
+		command:        shell + " -l",
+		startedAt:      reg.now(),
 		generation:     reg.generation,
 		process:        process,
 		ring:           newRing(ptycontract.HighWatermark),
@@ -518,6 +524,9 @@ func (reg *registry) close(id uint64) error {
 	reg.mu.Lock()
 	value := reg.sessions[id]
 	delete(reg.sessions, id)
+	if value != nil {
+		reg.processRevision++
+	}
 	reg.mu.Unlock()
 	if value == nil {
 		return fmt.Errorf("no session %d in this daemon", id)
