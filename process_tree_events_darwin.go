@@ -33,7 +33,7 @@ func (darwinProcessTreeEventSource) Observe(root uint32, changed func()) (proces
 		_ = unix.Close(queue)
 		return nil, fmt.Errorf("observe root process %d: %w", root, err)
 	}
-	go watch.run()
+	go watch.run(queue)
 	return watch, nil
 }
 
@@ -124,10 +124,10 @@ func (watch *darwinProcessTreeWatch) deleteLocked(pid uint32) {
 	delete(watch.tracked, pid)
 }
 
-func (watch *darwinProcessTreeWatch) run() {
+func (watch *darwinProcessTreeWatch) run(queue int) {
 	events := make([]unix.Kevent_t, 64)
 	for {
-		n, err := unix.Kevent(watch.queue, nil, events, nil)
+		n, err := unix.Kevent(queue, nil, events, nil)
 		if err != nil {
 			watch.mu.Lock()
 			closed := watch.closed

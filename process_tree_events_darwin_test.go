@@ -4,7 +4,7 @@ package main
 
 import (
 	"bufio"
-	"fmt"
+	"io"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -44,7 +44,7 @@ func TestDarwinProcessTreeEventsSignalForkAndExitWithoutPolling(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = watch.Close() })
 
-	if _, err := fmt.Fprintln(stdin, "sleep 30 & printf '%s\\n' $!"); err != nil {
+	if _, err := io.WriteString(stdin, "sleep 30 & printf '%s\\n' $!\n"); err != nil {
 		t.Fatal(err)
 	}
 	line, err := bufio.NewReader(stdout).ReadString('\n')
