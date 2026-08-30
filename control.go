@@ -69,7 +69,47 @@ func (d *daemon) commands() map[string]handler {
 		ptycontract.CommandDisplays:         d.displays,
 		ptycontract.CommandProcessInventory: d.processInventory,
 		"pty.observers":                     d.observers,
+		"pty.tail":                          d.tail,
 	}
+}
+
+type tailRequest struct {
+	PaneID string `json:"paneId"`
+	Bytes  int    `json:"bytes"`
+}
+
+func (d *daemon) tail(args map[string]json.RawMessage) (string, any, error) {
+	request, err := decode[tailRequest](args)
+	if err != nil {
+		return "ARGUMENT", nil, err
+	}
+	if request.PaneID == "" {
+		return "ARGUMENT", nil, fmt.Errorf("paneId is required")
+	}
+	limit := request.Bytes
+	if limit == 0 {
+		limit = 4096
+	}
+	if limit < 1 || limit > 65536 {
+		return "ARGUMENT", nil, fmt.Errorf("bytes must be within 1..65536")
+	}
+	value, held := d.registry.byPane(request.PaneID)
+	if !held {
+		return "NO_SESSION", nil, fmt.Errorf("pane %s has no session", request.PaneID)
+	}
+	floor, through, data := value.ring.snapshot()
+	retained := len(data)
+	if len(data) > limit {
+		data = data[len(data)-limit:]
+	}
+	return "", map[string]any{
+		"paneId": request.PaneID,
+		"floor": floor,
+		"through": through,
+		"retained": retained,
+		"returned": len(data),
+		"dataB64": base64.StdEncoding.EncodeToString(data),
+	}, nil
 }
 
 // observers answers the one question the session list cannot: who is attached
