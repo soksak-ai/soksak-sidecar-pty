@@ -80,6 +80,15 @@ func (value *observer) publishGapLocked(gap ptycontract.GapObservation) {
 	value.ready.Signal()
 }
 
+func (value *observer) publishGap(gap ptycontract.GapObservation) {
+	value.mu.Lock()
+	defer value.mu.Unlock()
+	if value.closed {
+		return
+	}
+	value.publishGapLocked(gap)
+}
+
 func (value *observer) publishResize(resize ptycontract.ResizeObservation) {
 	value.publish(observation{Resize: &resize})
 }

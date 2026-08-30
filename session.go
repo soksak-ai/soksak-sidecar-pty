@@ -639,9 +639,9 @@ func (reg *registry) observerCounts() []map[string]any {
 	return out
 }
 
-// adoptObserver attaches a prepared observer to this running session and hands
-// it the opened frame at the session's current coordinates. An open that finds
-// its pane already served must not drop the observer it was handed.
+// adoptObserver attaches a prepared observer to this running session. Opened
+// identifies the retained floor; retained output follows before any live byte.
+// Holding the session lock makes that ordering atomic with the pump.
 func (value *session) adoptObserver(token string, prepared *preparedObserver) {
 	value.mu.Lock()
 	value.observers[prepared.observer] = struct{}{}
@@ -650,11 +650,23 @@ func (value *session) adoptObserver(token string, prepared *preparedObserver) {
 		value.displaying[prepared.observer] = struct{}{}
 	}
 	eventSequence := value.eventSequence
-	written := value.written
 	generation := value.generation
-	value.mu.Unlock()
+	floor, through, retained := value.ring.snapshot()
 	prepared.observer.publishOpened(ptycontract.OpenedObservation{
 		Session: value.id, Generation: generation,
-		EventSequence: eventSequence, OutputSequence: written,
+		EventSequence: eventSequence, OutputSequence: floor,
 	})
+	if floor > 0 {
+		prepared.observer.publishGap(ptycontract.GapObservation{
+			FromEventSequence: 0, ThroughEventSequence: eventSequence,
+			FromSequence: 0, ThroughSequence: floor,
+		})
+	}
+	if len(retained) > 0 {
+		prepared.observer.publishOutput(ptycontract.OutputObservation{
+			EventSequence: eventSequence, FromSequence: floor,
+			ThroughSequence: through, Bytes: retained,
+		})
+	}
+	value.mu.Unlock()
 }

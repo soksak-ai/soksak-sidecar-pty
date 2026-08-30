@@ -6,19 +6,20 @@ import (
 	ptycontract "github.com/soksak-ai/soksak-contract-pty"
 )
 
-// An open that finds its pane already served attaches the observer it was
-// handed; the observer starts at the session's current coordinates and sees
-// every byte pumped after that.
-func TestAdoptObserverAttachesToTheRunningSessionAtItsCurrentCoordinates(t *testing.T) {
+// An observer adopted by a running pane receives the retained prefix before
+// later output. Its mirror must not start at the current sequence with no
+// content.
+func TestAdoptObserverReplaysTheRetainedPrefixBeforeLiveBytes(t *testing.T) {
 	value := &session{
 		id: 3, generation: 4, paneID: "pane.1", windowLabel: "win",
-		ring:           newRing(ptycontract.HighWatermark),
+		ring:           newRing(16),
 		observers:      make(map[*observer]struct{}),
 		observerTokens: make(map[string]*observer),
 		displaying:     make(map[*observer]struct{}),
 		resume:         make(chan struct{}, 1),
-		eventSequence:  7, written: 512,
+		eventSequence:  7,
 	}
+	value.written = value.ring.write([]byte("prompt"))
 	prepared := &preparedObserver{
 		request:  ptycontract.PrepareObserver{PaneID: "pane.1", WindowLabel: "win", Provider: "engine", Displays: true},
 		observer: newObserver(ptycontract.ObserverBufferBytes),
@@ -30,8 +31,8 @@ func TestAdoptObserverAttachesToTheRunningSessionAtItsCurrentCoordinates(t *test
 		t.Fatalf("adopted observer received %#v, want an opened event", event)
 	}
 	if event.Opened.Session != 3 || event.Opened.Generation != 4 ||
-		event.Opened.EventSequence != 7 || event.Opened.OutputSequence != 512 {
-		t.Fatalf("opened = %+v, want session 3 gen 4 at 7/512", *event.Opened)
+		event.Opened.EventSequence != 7 || event.Opened.OutputSequence != 0 {
+		t.Fatalf("opened = %+v, want session 3 gen 4 at retained floor 7/0", *event.Opened)
 	}
 
 	value.mu.Lock()
@@ -46,12 +47,13 @@ func TestAdoptObserverAttachesToTheRunningSessionAtItsCurrentCoordinates(t *test
 	value.mu.Lock()
 	for observer := range value.observers {
 		observer.publishOutput(ptycontract.OutputObservation{
-			EventSequence: 8, FromSequence: 512, ThroughSequence: 516, Bytes: []byte("late"),
+			EventSequence: 8, FromSequence: 6, ThroughSequence: 10, Bytes: []byte("late"),
 		})
 	}
 	value.mu.Unlock()
-	if output := prepared.observer.next(); output.Output == nil || string(output.Output.Bytes) != "late" {
-		t.Fatalf("adopted observer missed the pumped bytes: %#v", output)
+	if output := prepared.observer.next(); output.Output == nil || string(output.Output.Bytes) != "promptlate" ||
+		output.Output.FromSequence != 0 || output.Output.ThroughSequence != 10 {
+		t.Fatalf("adopted observer missed the retained prefix: %#v", output)
 	}
 }
 
