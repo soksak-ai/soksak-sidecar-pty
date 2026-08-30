@@ -5,22 +5,41 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+
+	"golang.org/x/sys/unix"
 )
+
+var ErrProcessExitedDuringSnapshot = errors.New("process exited during snapshot")
 
 // unixProcessTreeReader takes one native process-table snapshot for each inventory request. It
 // never infers ownership from names: ancestry from the PTY shell PID is the ownership proof.
-type unixProcessTreeReader struct{}
+type unixProcessTreeReader struct {
+	readProcessTable func() ([]byte, error)
+	readProcessCWD   func(uint32) (string, error)
+}
 
 func newProcessTreeReader() processTreeReader { return unixProcessTreeReader{} }
 
-func (unixProcessTreeReader) Descendants(root uint32) ([]processTreeEntry, error) {
-	rows, err := exec.Command("ps", "-axo", "pid=,ppid=,command=").Output()
+func (reader unixProcessTreeReader) Descendants(root uint32) ([]processTreeEntry, error) {
+	readProcessTable := reader.readProcessTable
+	if readProcessTable == nil {
+		readProcessTable = func() ([]byte, error) {
+			return exec.Command("ps", "-axo", "pid=,ppid=,command=").Output()
+		}
+	}
+	readProcessCWD := reader.readProcessCWD
+	if readProcessCWD == nil {
+		readProcessCWD = processCWD
+	}
+	rows, err := readProcessTable()
 	if err != nil {
 		return nil, fmt.Errorf("read process table: %w", err)
 	}
@@ -64,12 +83,15 @@ func (unixProcessTreeReader) Descendants(root uint32) ([]processTreeEntry, error
 				continue
 			}
 			seen[child.pid] = true
-			cwd, err := processCWD(child.pid)
+			queue = append(queue, child.pid)
+			cwd, err := readProcessCWD(child.pid)
+			if errors.Is(err, ErrProcessExitedDuringSnapshot) {
+				continue
+			}
 			if err != nil {
 				return nil, fmt.Errorf("read cwd for pid %d: %w", child.pid, err)
 			}
 			result = append(result, processTreeEntry{PID: child.pid, ParentPID: child.parent, Command: child.command, CWD: cwd})
-			queue = append(queue, child.pid)
 		}
 	}
 	return result, nil
@@ -77,10 +99,17 @@ func (unixProcessTreeReader) Descendants(root uint32) ([]processTreeEntry, error
 
 func processCWD(pid uint32) (string, error) {
 	if runtime.GOOS == "linux" {
-		return filepath.EvalSymlinks(fmt.Sprintf("/proc/%d/cwd", pid))
+		cwd, err := filepath.EvalSymlinks(fmt.Sprintf("/proc/%d/cwd", pid))
+		if errors.Is(err, os.ErrNotExist) {
+			return "", ErrProcessExitedDuringSnapshot
+		}
+		return cwd, err
 	}
 	output, err := exec.Command("lsof", "-a", "-p", strconv.FormatUint(uint64(pid), 10), "-d", "cwd", "-Fn").Output()
 	if err != nil {
+		if signalErr := unix.Kill(int(pid), 0); errors.Is(signalErr, unix.ESRCH) {
+			return "", ErrProcessExitedDuringSnapshot
+		}
 		return "", fmt.Errorf("lsof: %w", err)
 	}
 	for _, line := range strings.Split(string(output), "\n") {
