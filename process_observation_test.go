@@ -152,10 +152,16 @@ func TestProcessObserveEmitsGapFreeDescendantStartedUpdatedEndedAndClosesWatch(t
 	events.signal()
 	ended := readProcessEvent(t, reader)
 
+	remaining := processTreeEntry{PID: 23, ParentPID: 1, Command: "worker --remaining", CWD: "/work/remaining"}
+	tree.set(remaining)
+	events.signal()
+	remainingStarted := readProcessEvent(t, reader)
+
 	if err := registry.close(value.id); err != nil {
 		t.Fatal(err)
 	}
 	rootEnded := readProcessEvent(t, reader)
+	remainingEnded := readProcessEvent(t, reader)
 
 	want := []struct {
 		event    ptycontract.ProcessEvent
@@ -167,7 +173,9 @@ func TestProcessObserveEmitsGapFreeDescendantStartedUpdatedEndedAndClosesWatch(t
 		{started, 2, ptycontract.ProcessStarted, "pty-session-7-process-22", "running"},
 		{updated, 3, ptycontract.ProcessUpdated, "pty-session-7-process-22", "running"},
 		{ended, 4, ptycontract.ProcessEnded, "pty-session-7-process-22", "ended"},
-		{rootEnded, 5, ptycontract.ProcessEnded, "pty-session-7", "ended"},
+		{remainingStarted, 5, ptycontract.ProcessStarted, "pty-session-7-process-23", "running"},
+		{rootEnded, 6, ptycontract.ProcessEnded, "pty-session-7", "ended"},
+		{remainingEnded, 7, ptycontract.ProcessEnded, "pty-session-7-process-23", "ended"},
 	}
 	for _, item := range want {
 		if item.event.Revision != item.revision || item.event.Kind != item.kind ||
@@ -177,8 +185,10 @@ func TestProcessObserveEmitsGapFreeDescendantStartedUpdatedEndedAndClosesWatch(t
 		}
 	}
 	if started.Process.CWD != "/work/one" || updated.Process.CWD != "/work/two" ||
-		updated.Process.Command != "worker --second" || ended.Process.EndedAtUnixMs == nil {
-		t.Fatalf("descendant payloads: started=%+v updated=%+v ended=%+v", started, updated, ended)
+		updated.Process.Command != "worker --second" || ended.Process.EndedAtUnixMs == nil ||
+		remainingEnded.Process.EndedAtUnixMs == nil {
+		t.Fatalf("descendant payloads: started=%+v updated=%+v ended=%+v close-ended=%+v",
+			started, updated, ended, remainingEnded)
 	}
 	if events.watch == nil || !events.watch.isClosed() {
 		t.Fatal("session close did not close its native process watch")
@@ -188,8 +198,8 @@ func TestProcessObserveEmitsGapFreeDescendantStartedUpdatedEndedAndClosesWatch(t
 		t.Fatal(err)
 	}
 	final := raw.(ptycontract.ProcessInventory)
-	if final.Revision != 5 || len(final.Processes) != 0 {
-		t.Fatalf("final=%+v, want empty revision 5 inventory", final)
+	if final.Revision != 7 || len(final.Processes) != 0 {
+		t.Fatalf("final=%+v, want empty revision 7 inventory", final)
 	}
 
 	_ = client.Close()
