@@ -13,11 +13,16 @@ byte 수, base64 byte를 반환합니다. 기본값은 4 KiB이고 hard maximum�
 하며 renderer를 attach하거나 ring ownership을 바꾸지 않습니다.
 
 `process.inventory`는 프로세스 모니터가 읽는 소유자 snapshot입니다. 이 사이드카가 시작한 셸을
-owner, window, pane, pid, command, state, timestamp와 함께 명시적으로 반환하고 Unix에서는 셸의
-조상 관계로 찾은 자식도 포함합니다. `process.observe`는 초기 snapshot 뒤 하나의 연결을 유지하며
-peer가 닫을 때까지 revision이 붙은 `started`/`ended` record를 보냅니다. Windows ConPTY job 열거와
-updated event는 별도 gate이므로 선택한 플랫폼의 소유권 범위가 구현되기 전에는 완성된 모니터라고
-주장하지 않습니다.
+owner, window, pane, pid, command, state, timestamp와 함께 명시적으로 반환하고 셸의 조상 관계로
+찾은 자식도 포함합니다. 이 inventory는 요청할 때 workstation을 다시 훑은 결과가 아니라 하나의
+owner ledger 현재값이며, 공개 record 하나가 바뀔 때마다 revision이 정확히 1 증가합니다.
+
+`process.observe`는 초기 snapshot의 revision과 구독 경계를 원자적으로 맞춘 뒤 `started`, `updated`,
+`ended` 전체 record를 보냅니다. Darwin에서는 `EVFILT_PROC`의 `NOTE_FORK`, `NOTE_EXEC`, `NOTE_EXIT`가
+descendant snapshot 비교를 일으키며 timer나 refresh loop는 없습니다. 세션을 닫을 때는 kernel watch를
+먼저 끝내고 그 세션 소유 record를 모두 ended로 전환합니다. consumer는 revision gap을 stream 실패로
+판정하고 새 snapshot으로 다시 연결합니다. native descendant event source가 없는 플랫폼은 polling으로
+대체하지 않고 `PROCESS_OBSERVE_UNSUPPORTED` code로 명시적으로 거부합니다.
 
 세션의 렌더러는 하나이며, 마지막에 붙은 쪽입니다. 떼지 않고 사라진 실행이 표식을 남겼다고 해서 다음
 부착을 거부하면, 그 pane 은 다시는 아무것도 그릴 수 없습니다. 사라진 쪽은 더 낮은 세대를 들고 있으므로

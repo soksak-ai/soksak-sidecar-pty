@@ -20,10 +20,17 @@ retained and returned byte counts, and base64 bytes. The default is 4 KiB and th
 
 `process.inventory` is the owner-facing snapshot for the process monitor. It reports the shell
 session records this sidecar started with explicit owner, window, pane, pid, command, state and
-timestamps, plus Unix descendants found from the shell's process ancestry. `process.observe` keeps
-one connection open after its initial snapshot and emits revisioned `started`/`ended` records until
-the peer closes. Windows ConPTY job enumeration and updated events are separate gates; this stream
-is not a complete monitor until the selected platform's ownership coverage is implemented.
+timestamps, plus descendants found from the shell's process ancestry. The inventory is the current
+value of one owner ledger, not a request-time workstation scan. Every materialized record change
+advances that ledger by exactly one revision.
+
+`process.observe` atomically subscribes at the revision of its initial snapshot, then emits complete
+`started`, `updated`, and `ended` records. On Darwin, `EVFILT_PROC` `NOTE_FORK`, `NOTE_EXEC`, and
+`NOTE_EXIT` notifications trigger descendant snapshot comparison; there is no timer or refresh loop.
+A session close first stops its kernel watch and then ends every record owned by that session. A
+consumer treats a revision gap as a failed stream and reconnects for a new snapshot. Platforms
+without a native descendant event source refuse the stream with the named
+`PROCESS_OBSERVE_UNSUPPORTED` code; request-time polling is not a fallback.
 
 A session has one renderer: the last to attach. A run that went away without detaching left a mark,
 and refusing the next attach because of it would leave a pane nothing can ever draw again. The one
