@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -44,9 +46,14 @@ func TestDarwinProcessObserveStreamsLiveDescendantLifecycleWithoutPolling(t *tes
 		t.Fatalf("initial=%+v, want empty revision 0", initial)
 	}
 
+	workdir := t.TempDir()
+	execGate := filepath.Join(workdir, "exec-gate")
+	if err := syscall.Mkfifo(execGate, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	value, err := registry.open(ptycontract.Open{
 		PaneID: "pane-live", WindowLabel: "window-live", Shell: "/bin/sh",
-		CWD: t.TempDir(), Cols: 80, Rows: 24,
+		CWD: workdir, Cols: 80, Rows: 24,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +65,8 @@ func TestDarwinProcessObserveStreamsLiveDescendantLifecycleWithoutPolling(t *tes
 		t.Fatalf("root started=%+v", rootStarted)
 	}
 
-	if err := value.write([]byte("sleep 30\n")); err != nil {
+	command := "/bin/sh -c 'read gate < \"$1\"; exec sleep 30' watcher " + strconv.Quote(execGate) + " &\n"
+	if err := value.write([]byte(command)); err != nil {
 		t.Fatal(err)
 	}
 	var child ptycontract.Process
@@ -68,9 +76,32 @@ func TestDarwinProcessObserveStreamsLiveDescendantLifecycleWithoutPolling(t *tes
 		if event.Revision != revision {
 			t.Fatalf("event revision=%d after %d", event.Revision, revision-1)
 		}
-		if event.Process.ID != rootStarted.Process.ID && event.Process.State == "running" &&
-			strings.Contains(event.Process.Command, "sleep 30") {
+		if event.Kind == ptycontract.ProcessStarted && event.Process.ID != rootStarted.Process.ID &&
+			event.Process.State == "running" && strings.Contains(event.Process.Command, "read gate") {
 			child = event.Process
+		}
+	}
+	gate, err := os.OpenFile(execGate, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(gate, "continue\n"); err != nil {
+		_ = gate.Close()
+		t.Fatal(err)
+	}
+	if err := gate.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		event := readProcessEvent(t, reader)
+		revision++
+		if event.Revision != revision {
+			t.Fatalf("event revision=%d after %d", event.Revision, revision-1)
+		}
+		if event.Process.ID == child.ID && event.Kind == ptycontract.ProcessUpdated &&
+			strings.HasPrefix(event.Process.Command, "sleep 30") {
+			child = event.Process
+			break
 		}
 	}
 	if err := syscall.Kill(int(child.PID), syscall.SIGTERM); err != nil {
