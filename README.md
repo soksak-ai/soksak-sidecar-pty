@@ -14,6 +14,9 @@ Everything downstream of that follows: the ring holds what a shell printed while
 attached, `fromSeq` is how a client that comes back says where it got to, and the flow-control
 watermarks bound what one unattended session can cost.
 Status reports the last size successfully applied to each PTY and its source event sequence.
+`pty.tail` reads a bounded suffix from that same output ring and returns its floor, through sequence,
+retained and returned byte counts, and base64 bytes. The default is 4 KiB and the hard maximum is
+64 KiB. It is an observation command only: it neither attaches a renderer nor changes ring ownership.
 
 `process.inventory` is the owner-facing snapshot for the process monitor. It reports the shell
 session records this sidecar started with explicit owner, window, pane, pid, command, state and

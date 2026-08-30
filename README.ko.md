@@ -8,6 +8,9 @@
 이 사이드카가 시작한 셸은 앱이 재시작하거나 창이 닫혀도 유지됩니다. 출력 링은
 렌더러가 없는 동안의 출력을 보관하고 절대 출력 순서와 흐름 제어 기준을 유지합니다.
 상태는 각 PTY에 마지막으로 성공적으로 적용된 크기와 원본 이벤트 순서를 반환합니다.
+`pty.tail`은 같은 output ring에서 bounded suffix를 읽고 floor, through sequence, retained·returned
+byte 수, base64 byte를 반환합니다. 기본값은 4 KiB이고 hard maximum은 64 KiB입니다. 이 명령은 관측만
+하며 renderer를 attach하거나 ring ownership을 바꾸지 않습니다.
 
 `process.inventory`는 프로세스 모니터가 읽는 소유자 snapshot입니다. 이 사이드카가 시작한 셸을
 owner, window, pane, pid, command, state, timestamp와 함께 명시적으로 반환하고 Unix에서는 셸의
