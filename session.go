@@ -76,21 +76,43 @@ type session struct {
 	eventSequence uint64
 	cols          uint16
 	rows          uint16
+	processEnded  func(*session, int64)
 }
 
 type registry struct {
-	mu              sync.Mutex
-	next            uint64
-	generation      uint64
-	processRevision uint64
-	sessions        map[uint64]*session
-	shell           string
-	stopped         bool
+	mu             sync.Mutex
+	next           uint64
+	generation     uint64
+	sessions       map[uint64]*session
+	shell          string
+	stopped        bool
+	processStarted func(*session)
+	processEnded   func(*session, int64)
 	// A session with no renderer is kept this long so a view that unmounted can mount again and
 	// reattach. Past it the session is what a run that went away left behind, and it ends: nothing
 	// can reach that shell, and it holds a process, its output ring and its file descriptors.
 	abandonAfter time.Duration
 	now          func() time.Time
+}
+
+// bindProcessLifecycle installs the one process-ledger boundary before sessions are served. It
+// also returns sessions that predate the binding (used by deterministic owner tests and adoption).
+func (reg *registry) bindProcessLifecycle(
+	started func(*session),
+	ended func(*session, int64),
+) []*session {
+	reg.mu.Lock()
+	reg.processStarted = started
+	reg.processEnded = ended
+	existing := make([]*session, 0, len(reg.sessions))
+	for _, value := range reg.sessions {
+		value.mu.Lock()
+		value.processEnded = ended
+		value.mu.Unlock()
+		existing = append(existing, value)
+	}
+	reg.mu.Unlock()
+	return existing
 }
 
 const defaultAbandonAfter = 30 * time.Minute
@@ -161,7 +183,6 @@ func (reg *registry) openWithObserver(
 	}
 	reg.next++
 	reg.generation++
-	reg.processRevision++
 	value := &session{
 		id:             reg.next,
 		paneID:         request.PaneID,
@@ -179,6 +200,7 @@ func (reg *registry) openWithObserver(
 		resume:         make(chan struct{}, 1),
 		cols:           request.Cols,
 		rows:           request.Rows,
+		processEnded:   reg.processEnded,
 	}
 	if prepared != nil {
 		value.observers[prepared.observer] = struct{}{}
@@ -188,7 +210,11 @@ func (reg *registry) openWithObserver(
 		}
 	}
 	reg.sessions[value.id] = value
+	processStarted := reg.processStarted
 	reg.mu.Unlock()
+	if processStarted != nil {
+		processStarted(value)
+	}
 	if prepared != nil {
 		prepared.observer.publishOpened(ptycontract.OpenedObservation{
 			Session: value.id, Generation: value.generation,
@@ -492,7 +518,12 @@ func (value *session) reap() {
 	for observer := range value.observers {
 		observer.publishEnd(end)
 	}
+	processEnded := value.processEnded
+	endedAt := value.stamp().UnixMilli()
 	value.mu.Unlock()
+	if processEnded != nil {
+		processEnded(value, endedAt)
+	}
 
 	_ = value.process.Terminate()
 	_ = value.process.Close()
@@ -540,9 +571,6 @@ func (reg *registry) close(id uint64) error {
 	reg.mu.Lock()
 	value := reg.sessions[id]
 	delete(reg.sessions, id)
-	if value != nil {
-		reg.processRevision++
-	}
 	reg.mu.Unlock()
 	if value == nil {
 		return fmt.Errorf("no session %d in this daemon", id)

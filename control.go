@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"sort"
 	"sync"
 	"time"
 
@@ -29,18 +28,21 @@ import (
 // admitted a call would have been granted to something no manifest declared.
 
 type daemon struct {
-	registry         *registry
-	token            string
-	home             string
-	identity         string
-	processLabel     string
-	leaseMu          sync.Mutex
-	leases           map[string]uint64
-	observerMu       sync.Mutex
-	pendingObservers map[string]*preparedObserver
-	processMu        sync.Mutex
-	processObservers map[chan ptycontract.ProcessEvent]struct{}
-	processTree      processTreeReader
+	registry          *registry
+	token             string
+	home              string
+	identity          string
+	processLabel      string
+	leaseMu           sync.Mutex
+	leases            map[string]uint64
+	observerMu        sync.Mutex
+	pendingObservers  map[string]*preparedObserver
+	processSetup      sync.Once
+	processState      *processInventoryState
+	processSessionsMu sync.Mutex
+	processSessions   map[uint64]*processSessionMonitor
+	processTree       processTreeReader
+	processTreeEvents processTreeEventSource
 }
 
 type preparedObserver struct {
@@ -103,12 +105,12 @@ func (d *daemon) tail(args map[string]json.RawMessage) (string, any, error) {
 		data = data[len(data)-limit:]
 	}
 	return "", map[string]any{
-		"paneId": request.PaneID,
-		"floor": floor,
-		"through": through,
+		"paneId":   request.PaneID,
+		"floor":    floor,
+		"through":  through,
 		"retained": retained,
 		"returned": len(data),
-		"dataB64": base64.StdEncoding.EncodeToString(data),
+		"dataB64":  base64.StdEncoding.EncodeToString(data),
 	}, nil
 }
 
@@ -175,7 +177,7 @@ func (d *daemon) serveControl(conn net.Conn) {
 				return
 			}
 			if request.Command == ptycontract.CommandProcessObserve {
-				d.processObserve(conn, writer)
+				d.processObserve(conn, writer, request)
 			} else if request.Command == ptycontract.CommandAttach {
 				d.attach(conn, writer, request)
 			} else if request.Command == ptycontract.CommandAttachLease {
@@ -553,7 +555,6 @@ func (d *daemon) open(args map[string]json.RawMessage) (string, any, error) {
 	if err != nil {
 		return "OPEN", nil, err
 	}
-	d.emitProcess("started", value, nil)
 	return "", opened(value, true), nil
 }
 
@@ -616,15 +617,12 @@ func (d *daemon) closeSession(args map[string]json.RawMessage) (string, any, err
 	if err != nil {
 		return "ARGUMENT", nil, err
 	}
-	value, err := d.registry.get(request.Session)
-	if err != nil {
+	if _, err := d.registry.get(request.Session); err != nil {
 		return "NO_SESSION", nil, err
 	}
-	endedAt := time.Now().UnixMilli()
 	if err := d.registry.close(request.Session); err != nil {
 		return "NO_SESSION", nil, err
 	}
-	d.emitProcess("ended", value, &endedAt)
 	return "", request, nil
 }
 
@@ -633,29 +631,8 @@ func (d *daemon) sessions(map[string]json.RawMessage) (string, any, error) {
 }
 
 func (d *daemon) processInventory(map[string]json.RawMessage) (string, any, error) {
-	d.registry.mu.Lock()
-	revision := d.registry.processRevision
-	sessions := make([]*session, 0, len(d.registry.sessions))
-	for _, value := range d.registry.sessions {
-		sessions = append(sessions, value)
-	}
-	d.registry.mu.Unlock()
-	processes := make([]ptycontract.Process, 0, len(sessions))
-	for _, value := range sessions {
-		processes = append(processes, d.processRecord(value, "running", nil))
-		if d.processTree == nil {
-			continue
-		}
-		descendants, err := d.processTree.Descendants(value.process.PID())
-		if err != nil {
-			return "PROCESS_TREE", nil, fmt.Errorf("session %d process tree: %w", value.id, err)
-		}
-		for _, child := range descendants {
-			processes = append(processes, d.descendantRecord(value, child))
-		}
-	}
-	sort.Slice(processes, func(i, j int) bool { return processes[i].ID < processes[j].ID })
-	return "", ptycontract.ProcessInventory{Revision: revision, Processes: processes}, nil
+	d.startProcessMonitoring()
+	return "", d.processState.snapshot(), nil
 }
 
 func (d *daemon) descendantRecord(session *session, child processTreeEntry) ptycontract.Process {
@@ -677,23 +654,18 @@ func (d *daemon) processRecord(value *session, state string, endedAt *int64) pty
 	}
 }
 
-func (d *daemon) processObserve(conn net.Conn, writer *json.Encoder) {
-	events := make(chan ptycontract.ProcessEvent, 32)
-	var closeOnce sync.Once
-	d.processMu.Lock()
-	if d.processObservers == nil {
-		d.processObservers = make(map[chan ptycontract.ProcessEvent]struct{})
+func (d *daemon) processObserve(
+	conn net.Conn,
+	writer *json.Encoder,
+	request controlwire.Request,
+) {
+	d.startProcessMonitoring()
+	if err := d.processTreeEvents.Supported(); err != nil {
+		_ = writer.Encode(refusal(request, ProcessObserveUnsupportedCode, err.Error()))
+		_ = conn.Close()
+		return
 	}
-	d.processObservers[events] = struct{}{}
-	d.processMu.Unlock()
-	closeEvents := func() {
-		closeOnce.Do(func() {
-			d.processMu.Lock()
-			delete(d.processObservers, events)
-			close(events)
-			d.processMu.Unlock()
-		})
-	}
+	snapshot, events, closeEvents := d.processState.observe()
 	defer func() {
 		closeEvents()
 		_ = conn.Close()
@@ -706,36 +678,15 @@ func (d *daemon) processObserve(conn net.Conn, writer *json.Encoder) {
 		_, _ = conn.Read(one[:])
 		closeEvents()
 	}()
-	_, snapshot, err := d.processInventory(nil)
-	if err != nil {
-		_ = writer.Encode(controlwire.Response{Ok: false, Error: err.Error()})
-		return
-	}
-	if err := writer.Encode(controlwire.Response{Ok: true, Result: controlwire.Answer{Code: "OK", Data: snapshot}}); err != nil {
+	if err := writer.Encode(controlwire.Response{
+		ID: request.ID, Ok: true,
+		Result: controlwire.Answer{Code: "OK", Data: snapshot},
+	}); err != nil {
 		return
 	}
 	for event := range events {
 		if err := writer.Encode(event); err != nil {
 			return
-		}
-	}
-}
-
-func (d *daemon) emitProcess(kind string, value *session, endedAt *int64) {
-	d.registry.mu.Lock()
-	revision := d.registry.processRevision
-	d.registry.mu.Unlock()
-	state := "ended"
-	if kind == "started" {
-		state = "running"
-	}
-	event := ptycontract.ProcessEvent{Revision: revision, Kind: kind, Process: d.processRecord(value, state, endedAt)}
-	d.processMu.Lock()
-	defer d.processMu.Unlock()
-	for observer := range d.processObservers {
-		select {
-		case observer <- event:
-		default:
 		}
 	}
 }

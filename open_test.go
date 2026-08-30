@@ -22,14 +22,13 @@ func TestProcessInventoryReportsOnlyExplicitlyOwnedPTYSessions(t *testing.T) {
 		observerTokens: map[string]*observer{}, displaying: map[*observer]struct{}{}, now: func() time.Time { return started },
 	}
 	registry.sessions[value.id] = value
-	registry.processRevision = 3
 	d := &daemon{registry: registry, identity: "soksak-sidecar-pty"}
 	code, raw, err := d.processInventory(nil)
 	if err != nil || code != "" {
 		t.Fatalf("code=%q err=%v", code, err)
 	}
 	inventory, ok := raw.(ptycontract.ProcessInventory)
-	if !ok || inventory.Revision != 3 || len(inventory.Processes) != 1 {
+	if !ok || inventory.Revision != 1 || len(inventory.Processes) != 1 {
 		t.Fatalf("inventory=%#v", raw)
 	}
 	process := inventory.Processes[0]
@@ -82,11 +81,14 @@ func TestProcessObserveStreamsOwnerEventsAfterInitialSnapshot(t *testing.T) {
 	registry := newRegistry("/bin/sh")
 	value := &session{id: 7, paneID: "pane-1", command: "/bin/zsh -l", startedAt: time.UnixMilli(1_700_000_000_000), process: &resizeProcess{}, ring: newRing(16), observers: map[*observer]struct{}{}, observerTokens: map[string]*observer{}, displaying: map[*observer]struct{}{}}
 	registry.sessions[value.id] = value
-	registry.processRevision = 3
-	d := &daemon{registry: registry, identity: ptycontract.SidecarName}
+	d := &daemon{
+		registry: registry, identity: ptycontract.SidecarName,
+		processTreeEvents: &controlledProcessTreeEvents{},
+	}
 	server, client := net.Pipe()
 	done := make(chan struct{})
-	go func() { d.processObserve(server, json.NewEncoder(server)); close(done) }()
+	request := controlwire.Request{ID: "observe-owner", Command: ptycontract.CommandProcessObserve}
+	go func() { d.processObserve(server, json.NewEncoder(server), request); close(done) }()
 	reader := bufio.NewReader(client)
 	initial, err := reader.ReadBytes('\n')
 	if err != nil {
@@ -96,9 +98,9 @@ func TestProcessObserveStreamsOwnerEventsAfterInitialSnapshot(t *testing.T) {
 	if err := json.Unmarshal(initial, &response); err != nil || !response.Ok {
 		t.Fatalf("initial=%s response=%+v err=%v", initial, response, err)
 	}
-	endedAt := int64(1_700_000_001_000)
-	registry.processRevision = 4
-	d.emitProcess("ended", value, &endedAt)
+	if err := registry.close(value.id); err != nil {
+		t.Fatal(err)
+	}
 	eventLine, err := reader.ReadBytes('\n')
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +109,7 @@ func TestProcessObserveStreamsOwnerEventsAfterInitialSnapshot(t *testing.T) {
 	if err := json.Unmarshal(eventLine, &event); err != nil {
 		t.Fatal(err)
 	}
-	if event.Revision != 4 || event.Kind != "ended" || event.Process.State != "ended" || event.Process.EndedAtUnixMs == nil {
+	if event.Revision != 2 || event.Kind != "ended" || event.Process.State != "ended" || event.Process.EndedAtUnixMs == nil {
 		t.Fatalf("event=%+v", event)
 	}
 	_ = client.Close()
