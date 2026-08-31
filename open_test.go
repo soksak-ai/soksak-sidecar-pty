@@ -22,7 +22,7 @@ func TestProcessInventoryReportsOnlyExplicitlyOwnedPTYSessions(t *testing.T) {
 		observerTokens: map[string]*observer{}, displaying: map[*observer]struct{}{}, now: func() time.Time { return started },
 	}
 	registry.sessions[value.id] = value
-	d := &daemon{registry: registry, identity: "soksak-sidecar-pty"}
+	d := &daemon{registry: registry, identity: componentID}
 	code, raw, err := d.processInventory(nil)
 	if err != nil || code != "" {
 		t.Fatalf("code=%q err=%v", code, err)
@@ -54,7 +54,7 @@ func TestProcessInventoryIncludesOwnedDescendantsWithTheSameOwner(t *testing.T) 
 		observerTokens: map[string]*observer{}, displaying: map[*observer]struct{}{},
 	}
 	registry.sessions[value.id] = value
-	d := &daemon{registry: registry, identity: ptycontract.SidecarName, processTree: fakeProcessTreeReader{entries: []processTreeEntry{{
+	d := &daemon{registry: registry, identity: componentID, processTree: fakeProcessTreeReader{entries: []processTreeEntry{{
 		PID: 22, ParentPID: 1, Command: "worker --marker", CWD: "/work/pkg",
 	}}}}
 	_, raw, err := d.processInventory(nil)
@@ -82,7 +82,7 @@ func TestProcessObserveStreamsOwnerEventsAfterInitialSnapshot(t *testing.T) {
 	value := &session{id: 7, paneID: "pane-1", command: "/bin/zsh -l", startedAt: time.UnixMilli(1_700_000_000_000), process: &resizeProcess{}, ring: newRing(16), observers: map[*observer]struct{}{}, observerTokens: map[string]*observer{}, displaying: map[*observer]struct{}{}}
 	registry.sessions[value.id] = value
 	d := &daemon{
-		registry: registry, identity: ptycontract.SidecarName,
+		registry: registry, identity: componentID,
 		processTreeEvents: &controlledProcessTreeEvents{},
 	}
 	server, client := net.Pipe()

@@ -23,7 +23,7 @@ import (
 func TestDarwinProcessObserveStreamsLiveDescendantLifecycleWithoutPolling(t *testing.T) {
 	registry := newRegistry("/bin/sh")
 	d := &daemon{
-		registry: registry, identity: ptycontract.SidecarName,
+		registry: registry, identity: componentID,
 		processTree: newProcessTreeReader(), processTreeEvents: newProcessTreeEventSource(),
 	}
 	d.startProcessMonitoring()

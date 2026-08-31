@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	ptycontract "github.com/soksak-ai/soksak-contract-pty"
 )
 
 func TestProjectProcessNameIsOwnedByTheManifestAndInstaller(t *testing.T) {
@@ -13,13 +15,24 @@ func TestProjectProcessNameIsOwnedByTheManifestAndInstaller(t *testing.T) {
 		t.Fatal(err)
 	}
 	var manifest struct {
+		ID          string `json:"id"`
 		ProcessRole string `json:"processRole"`
+		Interface   []struct {
+			ID      string `json:"id"`
+			Version string `json:"version"`
+		} `json:"interface"`
 	}
 	if err := json.Unmarshal(body, &manifest); err != nil {
 		t.Fatal(err)
 	}
 	if manifest.ProcessRole != "sidecar-pty" {
 		t.Fatalf("processRole=%q want sidecar-pty", manifest.ProcessRole)
+	}
+	if manifest.ID != componentID {
+		t.Fatalf("id=%q want implementation-owned %q", manifest.ID, componentID)
+	}
+	if len(manifest.Interface) != 1 || manifest.Interface[0].ID != ptycontract.InterfaceID || manifest.Interface[0].Version != ptycontract.InterfaceVersion {
+		t.Fatalf("interface=%+v want %s@%s", manifest.Interface, ptycontract.InterfaceID, ptycontract.InterfaceVersion)
 	}
 	for _, name := range []string{"main.go", "process_name_darwin.go"} {
 		source, err := os.ReadFile(name)

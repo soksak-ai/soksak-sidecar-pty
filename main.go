@@ -30,6 +30,10 @@ import (
 	"time"
 )
 
+// componentID is this repository's install identity. A project-qualified runtime name is supplied
+// by the launcher and remains the process owner reported at runtime.
+const componentID = "soksak-sidecar-pty"
+
 func main() {
 	home := flag.String("home", "", "the identity home this daemon serves; every socket and the token derive from it")
 	runtimeRoot := flag.String("runtime", "", "the identity runtime root for sockets and tokens")
@@ -73,7 +77,7 @@ func run(home, runtimeRoot, shell, processLabel, sidecarName string) error {
 
 	d := &daemon{
 		registry: newRegistry(shell), token: token, home: home,
-		identity: ptycontract.SidecarName, processLabel: processLabel,
+		identity: sidecarName, processLabel: processLabel,
 		processTree: newProcessTreeReader(), processTreeEvents: newProcessTreeEventSource(),
 	}
 	d.startProcessMonitoring()

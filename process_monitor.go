@@ -22,7 +22,7 @@ type processSessionMonitor struct {
 func (d *daemon) startProcessMonitoring() {
 	d.processSetup.Do(func() {
 		if d.identity == "" {
-			d.identity = ptycontract.SidecarName
+			d.identity = componentID
 		}
 		if d.processTreeEvents == nil {
 			d.processTreeEvents = unsupportedProcessTreeEventSource{}

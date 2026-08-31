@@ -105,7 +105,7 @@ func TestProcessObserveEmitsGapFreeDescendantStartedUpdatedEndedAndClosesWatch(t
 	tree := &mutableProcessTreeReader{}
 	events := &controlledProcessTreeEvents{}
 	d := &daemon{
-		registry: registry, identity: ptycontract.SidecarName,
+		registry: registry, identity: componentID,
 		processTree: tree, processTreeEvents: events,
 	}
 	d.startProcessMonitoring()
@@ -208,7 +208,7 @@ func TestProcessObserveEmitsGapFreeDescendantStartedUpdatedEndedAndClosesWatch(t
 
 func TestProcessObserveRefusesNamedUnsupportedEventSource(t *testing.T) {
 	d := &daemon{
-		registry: newRegistry("/bin/sh"), identity: ptycontract.SidecarName,
+		registry: newRegistry("/bin/sh"), identity: componentID,
 		processTreeEvents: &controlledProcessTreeEvents{supportedErr: ErrProcessObservationUnsupported},
 	}
 	server, client := net.Pipe()
