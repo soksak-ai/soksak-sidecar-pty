@@ -78,7 +78,7 @@ func TestSessionTerminationStopsTheShellProcessGroup(t *testing.T) {
 		_ = process.Wait()
 	}()
 
-	if _, err := process.Write([]byte("sleep 30 & child=$!; printf 'PTY_CHILD=%s\n' \"$child\"; wait\n")); err != nil {
+	if _, err := process.Write([]byte("nohup sleep 30 >/dev/null 2>&1 & child=$!; printf 'PTY_CHILD=%s\n' \"$child\"; wait\n")); err != nil {
 		t.Fatalf("writing child command: %v", err)
 	}
 	childPID, err := readProcessMarker(process, "PTY_CHILD=")
