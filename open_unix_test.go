@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -85,6 +86,9 @@ func TestSessionTerminationStopsTheShellProcessGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if descendants := processDescendantPIDs(shellPID); len(descendants) < 1 {
+		t.Fatalf("shell process %d did not retain a child: %v", shellPID, descendants)
+	}
 	if err := process.Terminate(); err != nil {
 		t.Fatalf("terminating process group: %v", err)
 	}
@@ -95,6 +99,46 @@ func TestSessionTerminationStopsTheShellProcessGroup(t *testing.T) {
 	if err := syscall.Kill(shellPID, 0); err == nil {
 		t.Fatalf("shell process %d remains after process-group termination", shellPID)
 	}
+	if descendants := processDescendantPIDs(shellPID); len(descendants) != 0 {
+		t.Fatalf("shell process %d retains descendants after termination: %v", shellPID, descendants)
+	}
+}
+
+func processDescendantPIDs(root int) []int {
+	output, err := exec.Command("ps", "-axo", "pid=,ppid=").Output()
+	if err != nil {
+		return nil
+	}
+	parents := map[int]bool{root: true}
+	var descendants []int
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		pid, pidErr := strconv.Atoi(fields[0])
+		parent, parentErr := strconv.Atoi(fields[1])
+		if pidErr == nil && parentErr == nil && parents[parent] {
+			parents[pid] = true
+			descendants = append(descendants, pid)
+		}
+	}
+	return descendants
+}
+
+func processGroupMembers(groupLeader int) []int {
+	output, err := exec.Command("ps", "-o", "pid=", "-g", strconv.Itoa(groupLeader)).Output()
+	if err != nil {
+		return nil
+	}
+	var members []int
+	for _, line := range strings.Split(string(output), "\n") {
+		pid, err := strconv.Atoi(strings.TrimSpace(line))
+		if err == nil && pid > 0 {
+			members = append(members, pid)
+		}
+	}
+	return members
 }
 
 func readProcessMarker(process sessionProcess, marker string) (int, error) {
