@@ -86,6 +86,10 @@ func run(home, runtimeRoot, shell, processLabel, sidecarName string) error {
 		identity: sidecarName, processLabel: processLabel,
 		processTree: newProcessTreeReader(), processTreeEvents: newProcessTreeEventSource(),
 	}
+	// Before any session is stood up: each one holds a pty and a segment file, and the limit is
+	// reached inside opening a segment — which reports as bytes lost while the session keeps running
+	// and stops being stored.
+	raiseOpenFileLimit()
 	d.registry.attachStore(sessions)
 	d.startProcessMonitoring()
 
