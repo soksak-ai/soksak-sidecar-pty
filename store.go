@@ -161,7 +161,25 @@ func (s *store) read(id uint64) (sessionRecord, error) {
 }
 
 // markEnded is the stop write. It states that this owner ended on purpose.
+//
+// The writer's lock is taken and released before the record's, never inside it. A rotation holds
+// the writer's lock and reaches for the record's, so taking them the other way round here is a
+// deadlock — measured, and it needs one rotation beside one stop to reach. It hung the stop at the
+// first session whose pump was crossing the bound, which left every session after that one in map
+// order unmarked as well.
 func (s *store) markEnded(id uint64, at int64, exitCode *int64, through uint64) error {
+	segment := -1
+	if writer := s.heldWriter(id); writer != nil {
+		writer.mu.Lock()
+		if writer.file != nil {
+			segment = writer.segment
+			// The stop write forces the platter. A stop is the point a power cycle recovers from,
+			// and page cache does not survive one.
+			_ = writer.file.Sync()
+		}
+		writer.mu.Unlock()
+	}
+
 	lock := s.recordLock(id)
 	lock.Lock()
 	defer lock.Unlock()
@@ -172,15 +190,8 @@ func (s *store) markEnded(id uint64, at int64, exitCode *int64, through uint64) 
 	// The stop write carries the coordinate the session reached. Between rotations the record holds
 	// the one the last rotation left, and a stop is where that catches up.
 	record.Written = through
-	if writer := s.heldWriter(id); writer != nil {
-		writer.mu.Lock()
-		if writer.file != nil {
-			record.Segment = writer.segment
-			// The stop write forces the platter. A stop is the point a power cycle recovers from,
-			// and page cache does not survive one.
-			_ = writer.file.Sync()
-		}
-		writer.mu.Unlock()
+	if segment >= 0 {
+		record.Segment = segment
 	}
 	record.EndedAtUnixMs = &at
 	record.ExitCode = exitCode
