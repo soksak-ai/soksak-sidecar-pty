@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	controlwire "github.com/soksak-ai/soksak-contract-control"
 	ptycontract "github.com/soksak-ai/soksak-contract-pty"
 )
 
@@ -45,8 +46,8 @@ func TestASessionSurvivesItsOwnerProcessExiting(t *testing.T) {
 	if len(outcomes) != 1 {
 		t.Fatalf("the start restored %d sessions, not the one the record names", len(outcomes))
 	}
-	if outcomes[0].Session != id {
-		t.Fatalf("the session came back as %d, not %d", outcomes[0].Session, id)
+	if outcomes[0].Session != sessionText(id) {
+		t.Fatalf("the session came back as %s, not %d", outcomes[0].Session, id)
 	}
 	if outcomes[0].Outcome != restoreFull {
 		t.Fatalf("a record a stop marked restored as %q", outcomes[0].Outcome)
@@ -88,7 +89,7 @@ func TestARecordNoStopMarkedRestoresAsDegraded(t *testing.T) {
 	outcomes := second.restore()
 	t.Cleanup(func() { second.shutdown() })
 
-	if len(outcomes) != 1 || outcomes[0].Session != id {
+	if len(outcomes) != 1 || outcomes[0].Session != sessionText(id) {
 		t.Fatalf("the crash record did not restore: %+v", outcomes)
 	}
 	if outcomes[0].Outcome != restoreDegraded {
@@ -184,19 +185,19 @@ func TestTheReportAnswersForEverySessionTheCallerNames(t *testing.T) {
 	t.Cleanup(func() { second.shutdown() })
 
 	gone := restored + 1
-	report := second.restoreReport([]uint64{restored, gone})
+	report := second.restoreReport([]string{sessionText(restored), sessionText(gone)})
 	if !report.Complete {
 		t.Fatal("a daemon that read its store through reports the read as unfinished")
 	}
-	byID := map[uint64]string{}
-	for _, outcome := range report.Outcomes {
+	byID := map[string]string{}
+	for _, outcome := range report.Sessions {
 		byID[outcome.Session] = outcome.Outcome
 	}
-	if byID[restored] != ptycontract.RestoreFull {
-		t.Fatalf("the restored session reports %q", byID[restored])
+	if byID[sessionText(restored)] != controlwire.SessionFull {
+		t.Fatalf("the restored session reports %q", byID[sessionText(restored)])
 	}
-	if byID[gone] != ptycontract.RestoreLost {
-		t.Fatalf("a session with no record reports %q, not lost", byID[gone])
+	if byID[sessionText(gone)] != controlwire.SessionLost {
+		t.Fatalf("a session with no record reports %q, not lost", byID[sessionText(gone)])
 	}
 }
 
@@ -217,12 +218,12 @@ func TestAnEmptyRequestReportsEverySessionTheDaemonKnows(t *testing.T) {
 	t.Cleanup(func() { reg.shutdown() })
 
 	report := reg.restoreReport(nil)
-	if len(report.Outcomes) != 1 || report.Outcomes[0].Session != opened.id {
-		t.Fatalf("an empty request reported %+v", report.Outcomes)
+	if len(report.Sessions) != 1 || report.Sessions[0].Session != sessionText(opened.id) {
+		t.Fatalf("an empty request reported %+v", report.Sessions)
 	}
 	// This session was opened here rather than restored, so nothing about a previous process is
 	// claimed for it.
-	if report.Outcomes[0].Outcome != ptycontract.RestoreFull {
-		t.Fatalf("a session this daemon opened reports %q", report.Outcomes[0].Outcome)
+	if report.Sessions[0].Outcome != controlwire.SessionFull {
+		t.Fatalf("a session this daemon opened reports %q", report.Sessions[0].Outcome)
 	}
 }

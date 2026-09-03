@@ -93,7 +93,7 @@ func run(home, runtimeRoot, shell, processLabel, sidecarName string) error {
 	// what makes a session outlive the process, and it comes before anything serves: a caller that
 	// reached a pane mid-restore would open a second session for it.
 	for _, outcome := range d.registry.restore() {
-		fmt.Fprintf(os.Stderr, "soksak-sidecar-pty: session %d restored %s\n",
+		fmt.Fprintf(os.Stderr, "soksak-sidecar-pty: session %s restored %s\n",
 			outcome.Session, outcome.Outcome)
 	}
 

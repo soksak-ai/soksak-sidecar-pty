@@ -4,19 +4,32 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 
+	controlwire "github.com/soksak-ai/soksak-contract-control"
 	ptycontract "github.com/soksak-ai/soksak-contract-pty"
 )
 
-// The outcomes are the wire's. A second set of names here would be a second answer to what a start
-// ended in, and the two would disagree the first time one of them changed.
+// The outcomes are the envelope's. A second set of names here would be a second answer to what a
+// start ended in, and the two would disagree the first time one of them changed.
 const (
-	restoreFull     = ptycontract.RestoreFull
-	restoreDegraded = ptycontract.RestoreDegraded
-	restoreFailed   = ptycontract.RestoreFailed
+	restoreFull     = controlwire.SessionFull
+	restoreDegraded = controlwire.SessionDegraded
+	restoreFailed   = controlwire.SessionFailed
 )
 
-type restoreOutcome = ptycontract.SessionRestore
+type restoreOutcome = controlwire.SessionOutcome
+
+// sessionText is how a session id travels on the envelope. Decimal, and the envelope reads nothing
+// out of it.
+func sessionText(id uint64) string { return strconv.FormatUint(id, 10) }
+
+// sessionNumber reads back what sessionText wrote. A caller naming something else names no session
+// this daemon has.
+func sessionNumber(text string) (uint64, bool) {
+	id, err := strconv.ParseUint(text, 10, 64)
+	return id, err == nil
+}
 
 // restore reads this owner's records and stands each session back up.
 //
@@ -42,7 +55,7 @@ func (reg *registry) restore() []restoreOutcome {
 	for _, id := range ids {
 		outcome := reg.restoreOne(held, id)
 		outcomes = append(outcomes, outcome)
-		reg.recordOutcome(outcome)
+		reg.recordOutcome(id, outcome)
 		if outcome.Outcome == restoreFailed {
 			// The record stays. It is the only evidence of what was lost, and a later start with a
 			// reader that works may stand it up.
@@ -65,11 +78,11 @@ func (reg *registry) markStoreRead() {
 func (reg *registry) restoreOne(held *store, id uint64) restoreOutcome {
 	record, err := held.read(id)
 	if err != nil {
-		return restoreOutcome{Session: id, Outcome: restoreFailed, Reason: err.Error()}
+		return restoreOutcome{Session: sessionText(id), Outcome: restoreFailed, Reason: err.Error()}
 	}
 	output, err := held.output(id)
 	if err != nil {
-		return restoreOutcome{Session: id, Outcome: restoreFailed, Reason: err.Error()}
+		return restoreOutcome{Session: sessionText(id), Outcome: restoreFailed, Reason: err.Error()}
 	}
 
 	shell := record.Shell()
@@ -79,7 +92,7 @@ func (reg *registry) restoreOne(held *store, id uint64) restoreOutcome {
 	process, err := startSessionProcess(
 		shell, record.CWD, record.Environment, record.Cols, record.Rows)
 	if err != nil {
-		return restoreOutcome{Session: id, Outcome: restoreFailed, Reason: err.Error()}
+		return restoreOutcome{Session: sessionText(id), Outcome: restoreFailed, Reason: err.Error()}
 	}
 
 	reg.mu.Lock()
@@ -88,7 +101,7 @@ func (reg *registry) restoreOne(held *store, id uint64) restoreOutcome {
 		_ = process.Terminate()
 		_ = process.Close()
 		_ = process.Wait()
-		return restoreOutcome{Session: id, Outcome: restoreFailed, Reason: "this daemon is shutting down"}
+		return restoreOutcome{Session: sessionText(id), Outcome: restoreFailed, Reason: "this daemon is shutting down"}
 	}
 	reg.generation++
 	value := &session{
@@ -137,7 +150,7 @@ func (reg *registry) restoreOne(held *store, id uint64) restoreOutcome {
 		processStarted(value)
 	}
 	go value.pump()
-	return restoreOutcome{Session: id, Outcome: outcome}
+	return restoreOutcome{Session: sessionText(id), Outcome: outcome}
 }
 
 // Shell is what a recreated session starts. The record holds the command line the session ran under
@@ -161,13 +174,13 @@ func (reg *registry) byID(id uint64) (*session, bool) {
 
 // recordOutcome keeps what a start ended in for one session, so a caller reads the same answer
 // however long after the start it asks.
-func (reg *registry) recordOutcome(outcome restoreOutcome) {
+func (reg *registry) recordOutcome(id uint64, outcome restoreOutcome) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 	if reg.outcomes == nil {
 		reg.outcomes = make(map[uint64]restoreOutcome)
 	}
-	reg.outcomes[outcome.Session] = outcome
+	reg.outcomes[id] = outcome
 }
 
 // restoreReport answers what became of each session the caller names. An empty list asks for every
@@ -175,45 +188,45 @@ func (reg *registry) recordOutcome(outcome restoreOutcome) {
 //
 // A session this daemon holds but has no start outcome for was opened here rather than restored.
 // Nothing about a previous process is claimed for it: its state is what this process wrote.
-func (reg *registry) restoreReport(named []uint64) ptycontract.RestoreReport {
+func (reg *registry) restoreReport(named []string) controlwire.SessionReport {
 	reg.mu.Lock()
 	complete := reg.readStore
 	if len(named) == 0 {
-		named = make([]uint64, 0, len(reg.sessions)+len(reg.outcomes))
 		seen := make(map[uint64]bool, len(reg.sessions)+len(reg.outcomes))
 		for id := range reg.sessions {
-			named = append(named, id)
+			named = append(named, sessionText(id))
 			seen[id] = true
 		}
 		for id := range reg.outcomes {
 			if !seen[id] {
-				named = append(named, id)
+				named = append(named, sessionText(id))
 			}
 		}
 	}
-	outcomes := make([]ptycontract.SessionRestore, 0, len(named))
-	for _, id := range named {
-		if outcome, held := reg.outcomes[id]; held {
-			outcomes = append(outcomes, outcome)
-			continue
+	outcomes := make([]controlwire.SessionOutcome, 0, len(named))
+	for _, text := range named {
+		// A name this daemon could never have issued names no session it has, which is the same
+		// answer as one it issued and no longer holds.
+		id, numeric := sessionNumber(text)
+		if numeric {
+			if outcome, held := reg.outcomes[id]; held {
+				outcomes = append(outcomes, outcome)
+				continue
+			}
+			if _, held := reg.sessions[id]; held {
+				outcomes = append(outcomes, controlwire.SessionOutcome{
+					Session: text, Outcome: controlwire.SessionFull,
+				})
+				continue
+			}
 		}
-		if _, held := reg.sessions[id]; held {
-			outcomes = append(outcomes, ptycontract.SessionRestore{
-				Session: id, Outcome: ptycontract.RestoreFull,
-			})
-			continue
-		}
-		outcomes = append(outcomes, ptycontract.SessionRestore{
-			Session: id, Outcome: ptycontract.RestoreLost,
+		outcomes = append(outcomes, controlwire.SessionOutcome{
+			Session: text, Outcome: controlwire.SessionLost,
 		})
 	}
 	reg.mu.Unlock()
-	sortOutcomes(outcomes)
-	return ptycontract.RestoreReport{Complete: complete, Outcomes: outcomes}
-}
-
-func sortOutcomes(outcomes []ptycontract.SessionRestore) {
 	sort.Slice(outcomes, func(left, right int) bool {
 		return outcomes[left].Session < outcomes[right].Session
 	})
+	return controlwire.SessionReport{Complete: complete, Sessions: outcomes}
 }

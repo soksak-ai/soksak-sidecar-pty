@@ -65,7 +65,7 @@ func (d *daemon) commands() map[string]handler {
 		ptycontract.CommandPane:             d.pane,
 		ptycontract.CommandCloseWindow:      d.closeWindow,
 		ptycontract.CommandStatus:           d.status,
-		ptycontract.CommandRestored:         d.restored,
+		controlwire.SessionsCommand:         d.sessionReport,
 		ptycontract.CommandLease:            d.lease,
 		ptycontract.CommandDetachRenderer:   d.detachRenderer,
 		ptycontract.CommandPrepareObserver:  d.prepareObserver,
@@ -709,8 +709,8 @@ func (d *daemon) status(map[string]json.RawMessage) (string, any, error) {
 
 // restored answers what became of each session the caller names. It starts no process and ends
 // none: a caller reconciling its index must be able to ask without changing what it is asking about.
-func (d *daemon) restored(args map[string]json.RawMessage) (string, any, error) {
-	request, err := decode[ptycontract.Restored](args)
+func (d *daemon) sessionReport(args map[string]json.RawMessage) (string, any, error) {
+	request, err := decode[controlwire.SessionsRequest](args)
 	if err != nil {
 		return "ARGUMENT", nil, err
 	}
