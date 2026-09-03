@@ -43,6 +43,7 @@ classifies none. The terminal mirror owns that.
 | `rows` | session | The size applied to the pty. A restore reapplies it |
 | `processEnded` | process | A callback into the registry |
 | `store` | process | The open handle this session appends through. What it writes survives; the handle does not |
+| `feed` | process | The queue carrying output to the store. A queue is a place in this process, and a restart drains and rebuilds it |
 
 ## What S4-2 requires and this daemon does not hold
 

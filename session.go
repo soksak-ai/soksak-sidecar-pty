@@ -83,6 +83,9 @@ type session struct {
 	environment []string
 	// store is where this session's output is appended. Nil while no store is attached.
 	store *store
+	// feed carries this session's output to the store. The store is a subscriber and never pauses
+	// the pump, so output goes through here rather than being written from it (S4-5).
+	feed *storeFeed
 }
 
 type registry struct {
@@ -274,6 +277,8 @@ func (reg *registry) openWithObserver(
 				"soksak-sidecar-pty: session %d has no record and will not survive this process: %v\n",
 				value.id, err)
 			value.store = nil
+		} else {
+			value.feed = value.storeFeedFor()
 		}
 	}
 	if processStarted != nil {
@@ -309,12 +314,8 @@ func (value *session) pump() {
 			//
 			// After the ring rather than before, because the coordinate is what the ring answers and
 			// a store told a coordinate the ring had not reached would name a byte nobody wrote.
-			if value.store != nil {
-				if err := value.store.append(value.id, buffer[:count], value.written); err != nil {
-					fmt.Fprintf(os.Stderr,
-						"soksak-sidecar-pty: session %d lost %d bytes of its record: %v\n",
-						value.id, count, err)
-				}
+			if value.feed != nil {
+				value.feed.offer(buffer[:count], value.written)
 			}
 			value.writtenAt = value.stamp()
 			value.eventSequence++
@@ -600,6 +601,7 @@ func (value *session) reap(ended bool) {
 	}
 	value.closed = true
 	held := value.store
+	feed := value.feed
 	value.eventSequence++
 	end := ptycontract.EndObservation{EventSequence: value.eventSequence}
 	for observer := range value.observers {
@@ -608,6 +610,11 @@ func (value *session) reap(ended bool) {
 	processEnded := value.processEnded
 	endedAt := value.stamp().UnixMilli()
 	value.mu.Unlock()
+	// What the feed already accepted reaches the store before anything writes the record. A stop
+	// that ran ahead of the queue would record a coordinate the stored output does not reach.
+	if feed != nil {
+		feed.close()
+	}
 	if processEnded != nil {
 		processEnded(value, endedAt)
 	}
@@ -830,4 +837,12 @@ func (value *session) adoptObserver(token string, prepared *preparedObserver) {
 		})
 	}
 	value.mu.Unlock()
+}
+
+// storeFeedFor builds this session's feed over its store.
+func (value *session) storeFeedFor() *storeFeed {
+	held, id := value.store, value.id
+	return newStoreFeed(id, func(data []byte, through uint64) error {
+		return held.append(id, data, through)
+	})
 }

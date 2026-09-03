@@ -127,6 +127,9 @@ func (reg *registry) restoreOne(held *store, id uint64) restoreOutcome {
 		processEnded:   reg.processEnded,
 		store:          held,
 	}
+	// A restored session feeds its store the same way a new one does: offered, never written from
+	// the pump.
+	value.feed = value.storeFeedFor()
 	// The recorded modes do not go in here. They are a record the consumer reads with pty.modes and
 	// applies to a fresh mirror before it replays; put in the ring they would be replayed as output
 	// and drawn as the characters they are.
