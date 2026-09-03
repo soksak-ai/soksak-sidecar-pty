@@ -301,3 +301,47 @@ func TestARecordWithNoModeChangeHoldsNone(t *testing.T) {
 		t.Fatalf("a record nothing set modes on holds %q", record.Modes)
 	}
 }
+
+// A screen read as history is not the work continued. What was running is what a continuation
+// starts again, and the login shell this daemon started is not it.
+func TestTheProgramThatWasRunningIsRecorded(t *testing.T) {
+	store := newStoreAt(t)
+	if err := store.create(creationFacts(7)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.setForeground(7, "vim /etc/hosts", "/etc"); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.read(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Foreground != "vim /etc/hosts" {
+		t.Fatalf("the record names %q as what was running", record.Foreground)
+	}
+	if record.ForegroundCWD != "/etc" {
+		t.Fatalf("the record names %q as where it ran", record.ForegroundCWD)
+	}
+	if record.Command == record.Foreground {
+		t.Fatal("the login shell and the program that was running are one field")
+	}
+}
+
+// A session where nothing but the shell ran records no program. Offering the shell as a program to
+// start again would offer what a restore already did.
+func TestASessionRunningOnlyItsShellRecordsNoProgram(t *testing.T) {
+	store := newStoreAt(t)
+	if err := store.create(creationFacts(7)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.setForeground(7, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.read(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Foreground != "" {
+		t.Fatalf("a session running only its shell recorded %q", record.Foreground)
+	}
+}

@@ -59,6 +59,10 @@ other, and no field here holds them: this daemon parses no output, so a mode a p
 fact it has. The component that parses reports them through `pty.modes` and the record keeps the
 bytes opaquely.
 
+The program running in the session is recorded beside them. `command` is the login shell this daemon
+started and a restore starts that again on its own; the program a person was in is what they would
+have to start themselves, and a restore never does it for them.
+
 They are a record and not output. A consumer reads them and applies them to a fresh mirror before it
 replays; put in the ring they would be replayed and drawn as the characters they are, over the
 screen they were meant to restore.

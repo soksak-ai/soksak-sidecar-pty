@@ -17,6 +17,9 @@ type processSessionMonitor struct {
 	watch     processTreeWatch
 	closed    bool
 	lastError error
+	// foreground is the last program this monitor recorded. A record rewritten on every reconcile
+	// would be a write per poll for a value that changes when a program starts or exits.
+	foreground string
 }
 
 func (d *daemon) startProcessMonitoring() {
@@ -94,9 +97,41 @@ func (monitor *processSessionMonitor) reconcile() {
 		for _, child := range entries {
 			records = append(records, monitor.daemon.descendantRecord(monitor.session, child))
 		}
+		monitor.recordForeground(entries)
 	}
 	monitor.lastError = nil
 	monitor.daemon.processState.replaceSession(monitor.session.id, records, time.Now().UnixMilli())
+}
+
+// recordForeground puts the program running in this session into its record.
+//
+// A screen read as history is not the work continued: the login shell a restore starts again is not
+// what a person was doing, and the program they were in is what they would have to start themselves.
+// So it is recorded, and a restore still starts none of it — running a command a person did not ask
+// for, days after they last saw it, is not a restore.
+//
+// The shell's own child is the program. A deeper descendant is that program's, and offering it
+// would offer a build step rather than the build.
+func (monitor *processSessionMonitor) recordForeground(entries []processTreeEntry) {
+	held := monitor.daemon.registry.sessionStore()
+	if held == nil {
+		return
+	}
+	shell := monitor.session.process.PID()
+	command, cwd := "", ""
+	for _, child := range entries {
+		if child.ParentPID == shell {
+			command, cwd = child.Command, child.CWD
+			break
+		}
+	}
+	if command == monitor.foreground {
+		return
+	}
+	if err := held.setForeground(monitor.session.id, command, cwd); err != nil {
+		return
+	}
+	monitor.foreground = command
 }
 
 func (d *daemon) processSessionEnded(value *session, endedAtUnixMs int64) {

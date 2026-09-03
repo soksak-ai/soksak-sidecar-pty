@@ -46,6 +46,12 @@ type sessionRecord struct {
 	ExitCode      *int64 `json:"exitCode,omitempty"`
 	// Segment is which output file is being appended to. A reader takes the other one first.
 	Segment int `json:"segment"`
+	// Foreground is the program that was running in the session, and ForegroundCWD is where it ran.
+	// Command is the login shell this daemon started, which a restore starts again on its own; this
+	// is what a person would have to start again themselves, and a restore never does it for them.
+	// Empty when nothing but the shell was running.
+	Foreground    string `json:"foreground,omitempty"`
+	ForegroundCWD string `json:"foregroundCwd,omitempty"`
 	// Modes is the mode state a replay cannot rebuild, as the component that parses reported it.
 	// This daemon parses no output, so it stores this opaquely and reads nothing out of it. Empty
 	// until something reports one, and a restore from an empty one applies nothing rather than a
@@ -156,6 +162,17 @@ func (s *store) writerFor(id uint64) *segmentWriter {
 		s.open[id] = writer
 	}
 	return writer
+}
+
+// setForeground records the program running in one session and where it ran. Empty clears it, which
+// is what a program exiting back to the shell leaves.
+func (s *store) setForeground(id uint64, command, cwd string) error {
+	record, err := s.read(id)
+	if err != nil {
+		return err
+	}
+	record.Foreground, record.ForegroundCWD = command, cwd
+	return s.write(record)
 }
 
 // setModes records the mode state for one session. Modes change when a program enters or leaves a
