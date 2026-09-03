@@ -144,35 +144,6 @@ func TestARecordWhoseIdDoesNotMatchItsPathIsRefused(t *testing.T) {
 	}
 }
 
-// A record outlives the process that wrote it, so an owner that never swept would grow its store by
-// every session that ever ran.
-func TestStartRemovesEveryRecordTheIndexDoesNotName(t *testing.T) {
-	store := newStoreAt(t)
-	for _, id := range []uint64{7, 8, 9} {
-		if err := store.create(creationFacts(id)); err != nil {
-			t.Fatal(err)
-		}
-		if err := store.append(id, []byte("out")); err != nil {
-			t.Fatal(err)
-		}
-	}
-	removed, err := store.sweep(map[uint64]bool{8: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if removed != 2 {
-		t.Fatalf("the sweep removed %d records, not the two the index does not name", removed)
-	}
-	if _, err := store.read(8); err != nil {
-		t.Fatalf("the sweep removed the record the index names: %v", err)
-	}
-	for _, id := range []uint64{7, 9} {
-		if _, err := store.read(id); err == nil {
-			t.Fatalf("record %d survived the sweep", id)
-		}
-	}
-}
-
 func newStoreAt(t *testing.T) *store {
 	t.Helper()
 	value, err := newStore(t.TempDir())

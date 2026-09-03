@@ -143,11 +143,13 @@ func (reg *registry) restoreOne(held *store, id uint64) restoreOutcome {
 	if record.EndedAtUnixMs != nil {
 		outcome = restoreFull
 	}
-	record.EndedAtUnixMs = nil
 	record.ExitCode = nil
-	if err := held.write(record); err != nil {
+	// The mark lives on the kit's envelope, and clearing it is a fresh create rather than an update:
+	// an update leaves the envelope as it was, mark included.
+	record.EndedAtUnixMs = nil
+	if err := held.create(record); err != nil {
 		fmt.Fprintf(os.Stderr,
-			"soksak-sidecar-pty: session %d still carries its previous stop mark: %v\n", id, err)
+			"soksak-sidecar-pty: session %d still holds its previous stop mark: %v\n", id, err)
 	}
 
 	if processStarted != nil {
