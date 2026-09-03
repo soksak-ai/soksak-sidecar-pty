@@ -51,12 +51,16 @@ type sessionRecord struct {
 type store struct {
 	dir string
 
+	// mu guards the writer map and nothing else. A file write happens under the writer's own lock,
+	// so one session appending never pauses another: sixteen shells producing output would
+	// otherwise queue on one lock through sixteen disk writes.
 	mu   sync.Mutex
 	open map[uint64]*segmentWriter
 }
 
 // segmentWriter appends to one session's current segment and rolls to the other at the bound.
 type segmentWriter struct {
+	mu      sync.Mutex
 	file    *os.File
 	segment int
 	written int
@@ -122,42 +126,53 @@ func (s *store) markEnded(id uint64, at int64, exitCode *int64) error {
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	if writer, held := s.open[id]; held {
-		record.Segment = writer.segment
-		_ = writer.file.Sync()
+	if writer := s.heldWriter(id); writer != nil {
+		writer.mu.Lock()
+		if writer.file != nil {
+			record.Segment = writer.segment
+			// The stop write forces the platter. A stop is the point a power cycle recovers from,
+			// and page cache does not survive one.
+			_ = writer.file.Sync()
+		}
+		writer.mu.Unlock()
 	}
-	s.mu.Unlock()
 	record.EndedAtUnixMs = &at
 	record.ExitCode = exitCode
 	return s.write(record)
+}
+
+// writerFor returns this session's writer, opening it on first use. Only the map is guarded here.
+func (s *store) writerFor(id uint64) *segmentWriter {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	writer, held := s.open[id]
+	if !held {
+		writer = &segmentWriter{segment: -1}
+		s.open[id] = writer
+	}
+	return writer
 }
 
 // append adds output to the session's current segment. The write goes as far as the operating
 // system and is not forced to the platter: that is what a process exit needs, and a process exit is
 // what a restore recovers from.
 func (s *store) append(id uint64, data []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	writer, held := s.open[id]
-	if !held {
+	writer := s.writerFor(id)
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	if writer.file == nil {
 		record, err := s.read(id)
 		if err != nil {
 			return err
 		}
-		writer, err = s.openSegment(id, record.Segment)
-		if err != nil {
+		if err := s.openInto(writer, id, record.Segment); err != nil {
 			return err
 		}
-		s.open[id] = writer
 	}
 	if writer.written+len(data) > outputSegmentBound && writer.written > 0 {
-		rolled, err := s.roll(id, writer)
-		if err != nil {
+		if err := s.roll(id, writer); err != nil {
 			return err
 		}
-		writer = rolled
-		s.open[id] = writer
 	}
 	count, err := writer.file.Write(data)
 	writer.written += count
@@ -165,39 +180,41 @@ func (s *store) append(id uint64, data []byte) error {
 }
 
 // roll moves to the other segment and drops what was there. The dropped segment is the older half
-// of the retained output, which is what the bound gives up.
-func (s *store) roll(id uint64, writer *segmentWriter) (*segmentWriter, error) {
+// of the retained output, which is what the bound gives up. The caller holds the writer's lock.
+func (s *store) roll(id uint64, writer *segmentWriter) error {
 	next := 1 - writer.segment
 	_ = writer.file.Close()
+	writer.file = nil
 	if err := os.Remove(s.segmentPath(id, next)); err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	opened, err := s.openSegment(id, next)
-	if err != nil {
-		return nil, err
+		return err
 	}
 	record, err := s.read(id)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	record.Segment = next
 	if err := s.write(record); err != nil {
-		return nil, err
+		return err
 	}
-	return opened, nil
+	return s.openInto(writer, id, next)
 }
 
-func (s *store) openSegment(id uint64, segment int) (*segmentWriter, error) {
+// openInto opens one segment into the writer. The caller holds the writer's lock.
+func (s *store) openInto(writer *segmentWriter, id uint64, segment int) error {
+	if segment != 0 && segment != 1 {
+		segment = 0
+	}
 	file, err := os.OpenFile(s.segmentPath(id, segment), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	info, err := file.Stat()
 	if err != nil {
 		_ = file.Close()
-		return nil, err
+		return err
 	}
-	return &segmentWriter{file: file, segment: segment, written: int(info.Size())}, nil
+	writer.file, writer.segment, writer.written = file, segment, int(info.Size())
+	return nil
 }
 
 // output returns the retained output oldest first. The record names the segment being appended to,
@@ -207,11 +224,13 @@ func (s *store) output(id uint64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	if writer, held := s.open[id]; held {
-		record.Segment = writer.segment
+	if writer := s.heldWriter(id); writer != nil {
+		writer.mu.Lock()
+		if writer.file != nil {
+			record.Segment = writer.segment
+		}
+		writer.mu.Unlock()
 	}
-	s.mu.Unlock()
 	older, err := os.ReadFile(s.segmentPath(id, 1-record.Segment))
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
@@ -248,11 +267,17 @@ func (s *store) list() ([]uint64, error) {
 // remove drops a session's record and its output.
 func (s *store) remove(id uint64) error {
 	s.mu.Lock()
-	if writer, held := s.open[id]; held {
-		_ = writer.file.Close()
-		delete(s.open, id)
-	}
+	writer, held := s.open[id]
+	delete(s.open, id)
 	s.mu.Unlock()
+	if held {
+		writer.mu.Lock()
+		if writer.file != nil {
+			_ = writer.file.Close()
+			writer.file = nil
+		}
+		writer.mu.Unlock()
+	}
 	first := os.Remove(s.recordPath(id))
 	for segment := 0; segment < 2; segment++ {
 		if err := os.Remove(s.segmentPath(id, segment)); err != nil && !os.IsNotExist(err) {
@@ -285,12 +310,28 @@ func (s *store) sweep(named map[uint64]bool) (int, error) {
 	return removed, nil
 }
 
-func (s *store) close() error {
+// heldWriter returns the writer this session already has, or nil.
+func (s *store) heldWriter(id uint64) *segmentWriter {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.open[id]
+}
+
+func (s *store) close() error {
+	s.mu.Lock()
+	writers := make([]*segmentWriter, 0, len(s.open))
 	for id, writer := range s.open {
-		_ = writer.file.Close()
+		writers = append(writers, writer)
 		delete(s.open, id)
+	}
+	s.mu.Unlock()
+	for _, writer := range writers {
+		writer.mu.Lock()
+		if writer.file != nil {
+			_ = writer.file.Close()
+			writer.file = nil
+		}
+		writer.mu.Unlock()
 	}
 	return nil
 }

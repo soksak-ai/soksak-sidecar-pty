@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func creationFacts(id uint64) sessionRecord {
@@ -179,4 +181,87 @@ func newStoreAt(t *testing.T) *store {
 	}
 	t.Cleanup(func() { _ = value.close() })
 	return value
+}
+
+// One session's write never waits on another's. The store holds a lock per session, not one for
+// all of them: a shell producing output would otherwise pause every other shell for the length of
+// a disk write.
+func TestOneSessionsWriteDoesNotWaitOnAnother(t *testing.T) {
+	store := newStoreAt(t)
+	for _, id := range []uint64{7, 8} {
+		if err := store.create(creationFacts(id)); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.append(id, []byte("open")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	held := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		writer := store.writerFor(7)
+		writer.mu.Lock()
+		close(held)
+		<-release
+		writer.mu.Unlock()
+	}()
+	<-held
+	defer close(release)
+
+	done := make(chan error, 1)
+	go func() { done <- store.append(8, []byte("through")) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a write for session 8 waited on session 7's lock")
+	}
+}
+
+// Two sessions writing at once leave two records, each holding only its own output.
+func TestConcurrentSessionsDoNotMixTheirOutput(t *testing.T) {
+	store := newStoreAt(t)
+	for _, id := range []uint64{7, 8} {
+		if err := store.create(creationFacts(id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var group sync.WaitGroup
+	for _, pair := range []struct {
+		id   uint64
+		mark string
+	}{{7, "seven"}, {8, "eight"}} {
+		group.Add(1)
+		go func(id uint64, mark string) {
+			defer group.Done()
+			for i := 0; i < 200; i++ {
+				if err := store.append(id, []byte(mark)); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}(pair.id, pair.mark)
+	}
+	group.Wait()
+
+	for _, pair := range []struct {
+		id    uint64
+		mine  string
+		other string
+	}{{7, "seven", "eight"}, {8, "eight", "seven"}} {
+		output, err := store.output(pair.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(output), pair.other) {
+			t.Fatalf("session %d's record holds %q", pair.id, pair.other)
+		}
+		if strings.Count(string(output), pair.mine) != 200 {
+			t.Fatalf("session %d kept %d of its 200 writes", pair.id,
+				strings.Count(string(output), pair.mine))
+		}
+	}
 }
