@@ -138,7 +138,7 @@ func waitForStored(t *testing.T, value *store, id uint64, marker string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		output, err := value.output(id)
+		output, err := value.output(id, 2*outputSegmentBound)
 		if err == nil && strings.Contains(string(output), marker) {
 			return
 		}

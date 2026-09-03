@@ -55,14 +55,24 @@ func newRing(capacity int) *ring {
 // consumer draws from a place it never asked for. So the floor is set behind the retained bytes
 // rather than at zero, and the coordinate the session reached is where the next byte goes.
 func (r *ring) restore(data []byte, through uint64) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.bytes = append(r.bytes[:0], data...)
 	if through < uint64(len(data)) {
 		// A coordinate behind the bytes it is meant to end is one of the two being wrong, and the
 		// bytes are what a consumer reads. The coordinate follows them.
 		through = uint64(len(data))
 	}
+	// Only the tail this ring can serve, copied out rather than resliced. A reslice keeps the whole
+	// given buffer reachable for the life of the session: measured at 1 MB pinned per session to
+	// serve 1 KB, and the store hands over up to 8 MiB. Trimming here instead leaves the rest to be
+	// collected as soon as the caller drops it.
+	if len(data) > r.capacity {
+		data = data[len(data)-r.capacity:]
+	}
+	kept := make([]byte, len(data))
+	copy(kept, data)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.bytes = kept
 	r.floor = through - uint64(len(r.bytes))
 	r.trimLocked()
 }

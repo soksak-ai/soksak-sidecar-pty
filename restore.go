@@ -80,7 +80,9 @@ func (reg *registry) restoreOne(held *store, id uint64) restoreOutcome {
 	if err != nil {
 		return restoreOutcome{Session: sessionText(id), Outcome: restoreFailed, Reason: err.Error()}
 	}
-	output, err := held.output(id)
+	// Only what the ring will keep. Reading both segments whole hands over up to 8 MiB so that the
+	// ring can drop 7 of them, on the start path the launcher waits on.
+	output, err := held.output(id, ptycontract.HighWatermark)
 	if err != nil {
 		return restoreOutcome{Session: sessionText(id), Outcome: restoreFailed, Reason: err.Error()}
 	}

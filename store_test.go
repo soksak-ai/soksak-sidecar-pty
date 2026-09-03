@@ -68,7 +68,7 @@ func TestAppendedOutputIsReadBackInOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	output, err := store.output(7)
+	output, err := store.output(7, 2*outputSegmentBound)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestStoredOutputStaysWithinItsBoundAndKeepsTheNewest(t *testing.T) {
 	if err := store.append(7, tail, uint64(written)); err != nil {
 		t.Fatal(err)
 	}
-	output, err := store.output(7)
+	output, err := store.output(7, 2*outputSegmentBound)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestConcurrentSessionsDoNotMixTheirOutput(t *testing.T) {
 		mine  string
 		other string
 	}{{7, "seven", "eight"}, {8, "eight", "seven"}} {
-		output, err := store.output(pair.id)
+		output, err := store.output(pair.id, 2*outputSegmentBound)
 		if err != nil {
 			t.Fatal(err)
 		}

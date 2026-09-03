@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -328,7 +329,7 @@ func (s *store) openInto(writer *segmentWriter, id uint64, segment int) error {
 
 // output returns the retained output oldest first. The record names the segment being appended to,
 // so the other one holds what came before it.
-func (s *store) output(id uint64) ([]byte, error) {
+func (s *store) output(id uint64, atMost int) ([]byte, error) {
 	record, err := s.read(id)
 	if err != nil {
 		return nil, err
@@ -340,15 +341,49 @@ func (s *store) output(id uint64) ([]byte, error) {
 		}
 		writer.mu.Unlock()
 	}
-	older, err := os.ReadFile(s.segmentPath(id, 1-record.Segment))
-	if err != nil && !os.IsNotExist(err) {
+	// Newest first, then as much of the older half as the caller still has room for. The caller
+	// says how much tail it can hold rather than this reading both segments whole — up to 8 MiB —
+	// for a consumer that keeps 1 MB of it and drops the rest one line later.
+	newer, err := s.tail(s.segmentPath(id, record.Segment), atMost)
+	if err != nil {
 		return nil, err
 	}
-	newer, err := os.ReadFile(s.segmentPath(id, record.Segment))
-	if err != nil && !os.IsNotExist(err) {
+	older, err := s.tail(s.segmentPath(id, 1-record.Segment), atMost-len(newer))
+	if err != nil {
 		return nil, err
 	}
 	return append(older, newer...), nil
+}
+
+// tail reads the last atMost bytes of one segment. A segment that is not there is no output, which
+// is the ordinary state of the half a rotation dropped.
+func (s *store) tail(path string, atMost int) ([]byte, error) {
+	if atMost <= 0 {
+		return nil, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	size := info.Size()
+	from := int64(0)
+	if size > int64(atMost) {
+		from = size - int64(atMost)
+		size = int64(atMost)
+	}
+	body := make([]byte, size)
+	if _, err := io.ReadFull(io.NewSectionReader(file, from, size), body); err != nil {
+		return nil, err
+	}
+	return body, nil
 }
 
 // list returns every session this store holds a record for, in this format version.
