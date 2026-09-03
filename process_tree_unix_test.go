@@ -15,7 +15,8 @@ import (
 func TestUnixProcessTreeReaderSkipsAProcessThatExitsDuringEventMaterialization(t *testing.T) {
 	reader := unixProcessTreeReader{
 		readProcessTable: func() ([]byte, error) {
-			return []byte("100 1 root\n101 100 short-lived\n102 101 survivor\n"), nil
+			// pid, ppid, pgid, command — the shape ps is asked for.
+			return []byte("100 1 100 root\n101 100 101 short-lived\n102 101 101 survivor\n"), nil
 		},
 		readProcessCWD: func(pid uint32) (string, error) {
 			if pid == 101 {

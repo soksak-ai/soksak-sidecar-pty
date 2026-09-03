@@ -15,10 +15,11 @@ func (process *resizeProcess) Resize(cols, rows uint16) error {
 	process.cols, process.rows = cols, rows
 	return nil
 }
-func (*resizeProcess) PID() uint32      { return 1 }
-func (*resizeProcess) Terminate() error { return nil }
-func (*resizeProcess) Wait() error      { return nil }
-func (*resizeProcess) Close() error     { return nil }
+func (*resizeProcess) PID() uint32             { return 1 }
+func (*resizeProcess) ForegroundGroup() uint32 { return 0 }
+func (*resizeProcess) Terminate() error        { return nil }
+func (*resizeProcess) Wait() error             { return nil }
+func (*resizeProcess) Close() error            { return nil }
 
 func TestObserverReceivesAbsoluteOutputRangesWithoutAffectingRendererAck(t *testing.T) {
 	observer := newObserver(64)

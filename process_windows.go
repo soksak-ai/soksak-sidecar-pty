@@ -251,3 +251,7 @@ func (p *conPTYProcess) Close() error {
 func (p *conPTYProcess) closeConsole() {
 	p.consoleOnce.Do(func() { windows.ClosePseudoConsole(p.console) })
 }
+
+// ForegroundGroup is zero here. A console has no process group, so nothing on this platform can
+// say which program is in front, and the caller falls back to the shell's own child.
+func (p *conPTYProcess) ForegroundGroup() uint32 { return 0 }

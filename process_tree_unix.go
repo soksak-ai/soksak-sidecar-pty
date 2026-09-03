@@ -32,7 +32,9 @@ func (reader unixProcessTreeReader) Descendants(root uint32) ([]processTreeEntry
 	readProcessTable := reader.readProcessTable
 	if readProcessTable == nil {
 		readProcessTable = func() ([]byte, error) {
-			return exec.Command("ps", "-axo", "pid=,ppid=,command=").Output()
+			// The process group comes back with the rest: a terminal gives the keyboard to one group,
+			// and that is what says which child is in front rather than merely running.
+			return exec.Command("ps", "-axo", "pid=,ppid=,pgid=,command=").Output()
 		}
 	}
 	readProcessCWD := reader.readProcessCWD
@@ -44,23 +46,27 @@ func (reader unixProcessTreeReader) Descendants(root uint32) ([]processTreeEntry
 		return nil, fmt.Errorf("read process table: %w", err)
 	}
 	type row struct {
-		pid, parent uint32
-		command     string
+		pid, parent, group uint32
+		command            string
 	}
 	children := make(map[uint32][]row)
 	rootSeen := false
 	scanner := bufio.NewScanner(bytes.NewReader(rows))
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		if len(fields) < 3 {
+		if len(fields) < 4 {
 			continue
 		}
 		pid, pidErr := strconv.ParseUint(fields[0], 10, 32)
 		parent, parentErr := strconv.ParseUint(fields[1], 10, 32)
-		if pidErr != nil || parentErr != nil {
+		group, groupErr := strconv.ParseUint(fields[2], 10, 32)
+		if pidErr != nil || parentErr != nil || groupErr != nil {
 			continue
 		}
-		value := row{pid: uint32(pid), parent: uint32(parent), command: strings.Join(fields[2:], " ")}
+		value := row{
+			pid: uint32(pid), parent: uint32(parent), group: uint32(group),
+			command: strings.Join(fields[3:], " "),
+		}
 		children[value.parent] = append(children[value.parent], value)
 		if value.pid == root {
 			rootSeen = true
@@ -91,7 +97,10 @@ func (reader unixProcessTreeReader) Descendants(root uint32) ([]processTreeEntry
 			if err != nil {
 				return nil, fmt.Errorf("read cwd for pid %d: %w", child.pid, err)
 			}
-			result = append(result, processTreeEntry{PID: child.pid, ParentPID: child.parent, Command: child.command, CWD: cwd})
+			result = append(result, processTreeEntry{
+				PID: child.pid, ParentPID: child.parent, GroupID: child.group,
+				Command: child.command, CWD: cwd,
+			})
 		}
 	}
 	return result, nil

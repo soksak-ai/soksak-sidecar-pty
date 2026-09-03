@@ -17,9 +17,11 @@ type processSessionMonitor struct {
 	watch     processTreeWatch
 	closed    bool
 	lastError error
-	// foreground is the last program this monitor recorded. A record rewritten on every reconcile
-	// would be a write per poll for a value that changes when a program starts or exits.
-	foreground string
+	// foreground and foregroundCWD are the last offer this monitor recorded. A record rewritten on
+	// every reconcile would be a write per poll for a pair that changes when a program starts,
+	// exits, or is entered from somewhere else.
+	foreground    string
+	foregroundCWD string
 }
 
 func (d *daemon) startProcessMonitoring() {
@@ -118,20 +120,49 @@ func (monitor *processSessionMonitor) recordForeground(entries []processTreeEntr
 		return
 	}
 	shell := monitor.session.process.PID()
-	command, cwd := "", ""
-	for _, child := range entries {
-		if child.ParentPID == shell {
-			command, cwd = child.Command, child.CWD
-			break
-		}
-	}
-	if command == monitor.foreground {
+	command, cwd := foregroundOf(entries, shell, monitor.session.process.ForegroundGroup())
+	// Both fields, not the command alone. The same program re-entered from another directory is a
+	// different offer — S6-3 offers "the same program, over the same files, in the same directory"
+	// — and gating on the command left the directory at wherever it was first seen.
+	if command == monitor.foreground && cwd == monitor.foregroundCWD {
 		return
 	}
 	if err := held.setForeground(monitor.session.id, command, cwd); err != nil {
 		return
 	}
-	monitor.foreground = command
+	monitor.foreground, monitor.foregroundCWD = command, cwd
+}
+
+// foregroundOf names the program the terminal is giving the keyboard to.
+//
+// A terminal has one foreground process group, and every process in the program's tree carries it.
+// The shell's own child in that group is the program: a deeper descendant is that program's, and
+// offering it would offer a build step rather than the build.
+//
+// Ordering by pid was the old answer and it names whichever child started first, so a job put in
+// the background before the foreground program ran is what got offered.
+//
+// A group of zero is a terminal that reports none — a platform without it, not a shell with no
+// program — and there the shell's own child is still a better answer than none. A group that is the
+// shell's own is a shell at its prompt, which is running no program.
+func foregroundOf(entries []processTreeEntry, shell, group uint32) (string, string) {
+	if group == shell {
+		return "", ""
+	}
+	if group != 0 {
+		for _, child := range entries {
+			if child.ParentPID == shell && child.GroupID == group {
+				return child.Command, child.CWD
+			}
+		}
+		return "", ""
+	}
+	for _, child := range entries {
+		if child.ParentPID == shell {
+			return child.Command, child.CWD
+		}
+	}
+	return "", ""
 }
 
 func (d *daemon) processSessionEnded(value *session, endedAtUnixMs int64) {

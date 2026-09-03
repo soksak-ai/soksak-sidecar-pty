@@ -16,6 +16,10 @@ type sessionProcess interface {
 	Write([]byte) (int, error)
 	Resize(cols, rows uint16) error
 	PID() uint32
+	// ForegroundGroup is the process group the terminal is giving the keyboard to. Zero where the
+	// platform does not report one, which is a terminal that cannot say rather than a shell with no
+	// program in front.
+	ForegroundGroup() uint32
 	Terminate() error
 	Wait() error
 	Close() error
@@ -31,8 +35,11 @@ type processTreeReader interface {
 type processTreeEntry struct {
 	PID       uint32
 	ParentPID uint32
-	Command   string
-	CWD       string
+	// GroupID is the process group. A terminal gives the keyboard to one group at a time, so this
+	// is what says which of a shell's children is in front rather than merely running.
+	GroupID uint32
+	Command string
+	CWD     string
 }
 
 // session is one shell with a tty, its output ring, and what the caller told this daemon about it.

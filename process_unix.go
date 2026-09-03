@@ -8,6 +8,8 @@ import (
 	"syscall"
 
 	"github.com/creack/pty"
+
+	"golang.org/x/sys/unix"
 )
 
 type unixSessionProcess struct {
@@ -48,3 +50,18 @@ func (p *unixSessionProcess) Close() error { return p.master.Close() }
 //
 // The negative pid is the group. Signalling the shell alone leaves a build, a server or an editor
 // it started running with no terminal, no parent watching, and no way for anyone to find it again.
+
+// ForegroundGroup asks the tty which process group holds it.
+//
+// The master side of the pty answers for the session on the other end, so this is the group a
+// keystroke typed into this session would reach.
+func (p *unixSessionProcess) ForegroundGroup() uint32 {
+	if p.master == nil {
+		return 0
+	}
+	group, err := unix.IoctlGetInt(int(p.master.Fd()), unix.TIOCGPGRP)
+	if err != nil || group <= 0 {
+		return 0
+	}
+	return uint32(group)
+}
