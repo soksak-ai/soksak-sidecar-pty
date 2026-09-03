@@ -67,6 +67,7 @@ func (d *daemon) commands() map[string]handler {
 		ptycontract.CommandStatus:           d.status,
 		controlwire.SessionsCommand:         d.sessionReport,
 		controlwire.SessionCloseCommand:     d.sessionClose,
+		ptycontract.CommandModes:            d.modes,
 		ptycontract.CommandLease:            d.lease,
 		ptycontract.CommandDetachRenderer:   d.detachRenderer,
 		ptycontract.CommandPrepareObserver:  d.prepareObserver,
@@ -726,6 +727,29 @@ func (d *daemon) sessionClose(args map[string]json.RawMessage) (string, any, err
 		return "ARGUMENT", nil, err
 	}
 	return "", d.registry.closeSession(request.Session), nil
+}
+
+// modes records the mode state for one session, or reads back what was recorded. An empty report is
+// a read. The bytes are the reporting component's and this daemon reads nothing out of them.
+func (d *daemon) modes(args map[string]json.RawMessage) (string, any, error) {
+	request, err := decode[ptycontract.Modes](args)
+	if err != nil {
+		return "ARGUMENT", nil, err
+	}
+	held := d.registry.sessionStore()
+	if held == nil {
+		return "UNSUPPORTED", nil, fmt.Errorf("this daemon keeps no store, so it records no modes")
+	}
+	if len(request.Report) > 0 {
+		if err := held.setModes(request.Session, request.Report); err != nil {
+			return "TARGET_NOT_FOUND", nil, err
+		}
+	}
+	record, err := held.read(request.Session)
+	if err != nil {
+		return "TARGET_NOT_FOUND", nil, err
+	}
+	return "", ptycontract.ModesRecorded{Session: request.Session, Report: record.Modes}, nil
 }
 
 func (d *daemon) pane(args map[string]json.RawMessage) (string, any, error) {

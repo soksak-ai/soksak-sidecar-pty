@@ -46,6 +46,11 @@ type sessionRecord struct {
 	ExitCode      *int64 `json:"exitCode,omitempty"`
 	// Segment is which output file is being appended to. A reader takes the other one first.
 	Segment int `json:"segment"`
+	// Modes is the mode state a replay cannot rebuild, as the component that parses reported it.
+	// This daemon parses no output, so it stores this opaquely and reads nothing out of it. Empty
+	// until something reports one, and a restore from an empty one applies nothing rather than a
+	// guess.
+	Modes []byte `json:"modes,omitempty"`
 }
 
 type store struct {
@@ -151,6 +156,17 @@ func (s *store) writerFor(id uint64) *segmentWriter {
 		s.open[id] = writer
 	}
 	return writer
+}
+
+// setModes records the mode state for one session. Modes change when a program enters or leaves a
+// full-screen mode, which is rare, so this is written on change rather than on a cadence.
+func (s *store) setModes(id uint64, report []byte) error {
+	record, err := s.read(id)
+	if err != nil {
+		return err
+	}
+	record.Modes = append([]byte(nil), report...)
+	return s.write(record)
 }
 
 // append adds output to the session's current segment. The write goes as far as the operating

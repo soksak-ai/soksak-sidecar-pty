@@ -283,3 +283,50 @@ func TestClosingASessionThisDaemonNeverHeldIsNotAFailure(t *testing.T) {
 		t.Fatal("a session this daemon never held is reported as held")
 	}
 }
+
+// The recorded modes are a record, not output. Put in the ring they would be replayed and drawn as
+// the characters they are, on top of the screen they were meant to restore.
+func TestRecordedModesAreNotReplayedAsOutput(t *testing.T) {
+	home := t.TempDir()
+	first := newRegistry("/bin/sh")
+	firstStore, err := newStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.attachStore(firstStore)
+	opened, err := first.open(openRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := opened.id
+	if err := firstStore.setModes(id, []byte("v1 1 1 0 0 0 0 0 0 0 0 1 1 0")); err != nil {
+		t.Fatal(err)
+	}
+	first.shutdown()
+	_ = firstStore.close()
+
+	second := newRegistry("/bin/sh")
+	secondStore, err := newStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = secondStore.close() })
+	second.attachStore(secondStore)
+	second.restore()
+	t.Cleanup(func() { second.shutdown() })
+
+	back, held := second.byID(id)
+	if !held {
+		t.Fatal("the session did not restore")
+	}
+	if strings.Contains(string(replayOf(t, back)), "v1 1 1") {
+		t.Fatal("the mode record was replayed as output")
+	}
+	record, err := secondStore.read(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(record.Modes) == 0 {
+		t.Fatal("restoring dropped the recorded modes")
+	}
+}

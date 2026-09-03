@@ -125,6 +125,10 @@ func (reg *registry) restoreOne(held *store, id uint64) restoreOutcome {
 		processEnded:   reg.processEnded,
 		store:          held,
 	}
+	// The recorded modes do not go in here. They are a record the consumer reads with pty.modes and
+	// applies to a fresh mirror before it replays; put in the ring they would be replayed as output
+	// and drawn as the characters they are.
+	//
 	// The output the session produced is what a consumer replays to reach the screen it had. It sits
 	// ahead of anything the new shell writes, so an attach from sequence zero reads the whole
 	// session and not just what happened after this start.

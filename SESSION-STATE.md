@@ -55,5 +55,10 @@ was started, where, and with what environment. All three are held; the exit stat
 ## What the store holds and this struct does not
 
 `SESSION.md` S4-5 states two parts. The output is one and this daemon appends it. The modes are the
-other, and no field here holds them: this daemon parses no output, so a mode a program set is in
-no fact it has. The mirror that parses reports them, which is item 14.
+other, and no field here holds them: this daemon parses no output, so a mode a program set is in no
+fact it has. The component that parses reports them through `pty.modes` and the record keeps the
+bytes opaquely.
+
+They are a record and not output. A consumer reads them and applies them to a fresh mirror before it
+replays; put in the ring they would be replayed and drawn as the characters they are, over the
+screen they were meant to restore.

@@ -265,3 +265,39 @@ func TestConcurrentSessionsDoNotMixTheirOutput(t *testing.T) {
 		}
 	}
 }
+
+// The modes are the second of the two parts a terminal owner stores. They are written when they
+// change rather than on a cadence, and a record with none restores a screen whose modes are the
+// defaults.
+func TestTheModesAreStoredBesideTheOutput(t *testing.T) {
+	store := newStoreAt(t)
+	if err := store.create(creationFacts(7)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.setModes(7, []byte("v1 0 1 0 1 0 1 0 1 0 1 0 1 0")); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.read(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(record.Modes) != "v1 0 1 0 1 0 1 0 1 0 1 0 1 0" {
+		t.Fatalf("the modes came back as %q", record.Modes)
+	}
+}
+
+// A record written before any mode changed holds none, and a restore from it applies nothing rather
+// than applying a guess.
+func TestARecordWithNoModeChangeHoldsNone(t *testing.T) {
+	store := newStoreAt(t)
+	if err := store.create(creationFacts(7)); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.read(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(record.Modes) != 0 {
+		t.Fatalf("a record nothing set modes on holds %q", record.Modes)
+	}
+}
