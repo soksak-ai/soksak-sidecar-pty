@@ -46,6 +46,10 @@ type sessionRecord struct {
 	ExitCode      *int64 `json:"exitCode,omitempty"`
 	// Segment is which output file is being appended to. A reader takes the other one first.
 	Segment int `json:"segment"`
+	// Written is the coordinate this session's output reached, counting every byte it produced and
+	// not only the bytes still retained. A consumer holds one of these across a restart, so a
+	// restore that started it over would hand the same number to a different byte.
+	Written uint64 `json:"written"`
 	// Foreground is the program that was running in the session, and ForegroundCWD is where it ran.
 	// Command is the login shell this daemon started, which a restore starts again on its own; this
 	// is what a person would have to start again themselves, and a restore never does it for them.
@@ -132,11 +136,14 @@ func (s *store) read(id uint64) (sessionRecord, error) {
 }
 
 // markEnded is the stop write. It states that this owner ended on purpose.
-func (s *store) markEnded(id uint64, at int64, exitCode *int64) error {
+func (s *store) markEnded(id uint64, at int64, exitCode *int64, through uint64) error {
 	record, err := s.read(id)
 	if err != nil {
 		return err
 	}
+	// The stop write carries the coordinate the session reached. Between rotations the record holds
+	// the one the last rotation left, and a stop is where that catches up.
+	record.Written = through
 	if writer := s.heldWriter(id); writer != nil {
 		writer.mu.Lock()
 		if writer.file != nil {
@@ -175,6 +182,21 @@ func (s *store) setForeground(id uint64, command, cwd string) error {
 	return s.write(record)
 }
 
+// setWritten records the coordinate this session's output reached.
+//
+// Written on the same rotation the output is, rather than on every append: a write per byte chunk
+// would be a record rewritten as fast as the shell speaks. What a crash costs is the coordinate
+// moving back to the last rotation, and a consumer reading from behind where it left off draws
+// output it has seen rather than output it never will.
+func (s *store) setWritten(id uint64, through uint64) error {
+	record, err := s.read(id)
+	if err != nil {
+		return err
+	}
+	record.Written = through
+	return s.write(record)
+}
+
 // setModes records the mode state for one session. Modes change when a program enters or leaves a
 // full-screen mode, which is rare, so this is written on change rather than on a cadence.
 func (s *store) setModes(id uint64, report []byte) error {
@@ -186,10 +208,12 @@ func (s *store) setModes(id uint64, report []byte) error {
 	return s.write(record)
 }
 
-// append adds output to the session's current segment. The write goes as far as the operating
-// system and is not forced to the platter: that is what a process exit needs, and a process exit is
-// what a restore recovers from.
-func (s *store) append(id uint64, data []byte) error {
+// append adds output to the session's current segment and states the coordinate it ends at.
+//
+// The write goes as far as the operating system and is not forced to the platter: that is what a
+// process exit needs, and a process exit is what a restore recovers from. The coordinate rides
+// along so a rotation records where the session had reached when the older half was dropped.
+func (s *store) append(id uint64, data []byte, through uint64) error {
 	writer := s.writerFor(id)
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
@@ -203,7 +227,7 @@ func (s *store) append(id uint64, data []byte) error {
 		}
 	}
 	if writer.written+len(data) > outputSegmentBound && writer.written > 0 {
-		if err := s.roll(id, writer); err != nil {
+		if err := s.roll(id, writer, through); err != nil {
 			return err
 		}
 	}
@@ -214,7 +238,7 @@ func (s *store) append(id uint64, data []byte) error {
 
 // roll moves to the other segment and drops what was there. The dropped segment is the older half
 // of the retained output, which is what the bound gives up. The caller holds the writer's lock.
-func (s *store) roll(id uint64, writer *segmentWriter) error {
+func (s *store) roll(id uint64, writer *segmentWriter, through uint64) error {
 	next := 1 - writer.segment
 	_ = writer.file.Close()
 	writer.file = nil
@@ -226,6 +250,7 @@ func (s *store) roll(id uint64, writer *segmentWriter) error {
 		return err
 	}
 	record.Segment = next
+	record.Written = through
 	if err := s.write(record); err != nil {
 		return err
 	}

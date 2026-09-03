@@ -45,7 +45,7 @@ func TestOnlyTheEndMarkSaysTheOwnerStoppedCleanly(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := int64(0)
-	if err := store.markEnded(7, 99, &code); err != nil {
+	if err := store.markEnded(7, 99, &code, 0); err != nil {
 		t.Fatal(err)
 	}
 	read, err := store.read(7)
@@ -64,7 +64,7 @@ func TestAppendedOutputIsReadBackInOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, chunk := range []string{"one", "two", "three"} {
-		if err := store.append(7, []byte(chunk)); err != nil {
+		if err := store.append(7, []byte(chunk), 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -90,13 +90,13 @@ func TestStoredOutputStaysWithinItsBoundAndKeepsTheNewest(t *testing.T) {
 	}
 	written := 0
 	for written < 3*outputSegmentBound {
-		if err := store.append(7, chunk); err != nil {
+		if err := store.append(7, chunk, uint64(written)); err != nil {
 			t.Fatal(err)
 		}
 		written += len(chunk)
 	}
 	tail := []byte("THE-NEWEST")
-	if err := store.append(7, tail); err != nil {
+	if err := store.append(7, tail, uint64(written)); err != nil {
 		t.Fatal(err)
 	}
 	output, err := store.output(7)
@@ -163,7 +163,7 @@ func TestOneSessionsWriteDoesNotWaitOnAnother(t *testing.T) {
 		if err := store.create(creationFacts(id)); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.append(id, []byte("open")); err != nil {
+		if err := store.append(id, []byte("open"), 4); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -181,7 +181,7 @@ func TestOneSessionsWriteDoesNotWaitOnAnother(t *testing.T) {
 	defer close(release)
 
 	done := make(chan error, 1)
-	go func() { done <- store.append(8, []byte("through")) }()
+	go func() { done <- store.append(8, []byte("through"), 11) }()
 	select {
 	case err := <-done:
 		if err != nil {
@@ -209,7 +209,7 @@ func TestConcurrentSessionsDoNotMixTheirOutput(t *testing.T) {
 		go func(id uint64, mark string) {
 			defer group.Done()
 			for i := 0; i < 200; i++ {
-				if err := store.append(id, []byte(mark)); err != nil {
+				if err := store.append(id, []byte(mark), 0); err != nil {
 					t.Error(err)
 					return
 				}

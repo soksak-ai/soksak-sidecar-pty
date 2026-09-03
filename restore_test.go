@@ -330,3 +330,75 @@ func TestRecordedModesAreNotReplayedAsOutput(t *testing.T) {
 		t.Fatal("restoring dropped the recorded modes")
 	}
 }
+
+// A sequence is a coordinate into this session's output, and a consumer holds one across a restart.
+// A restore that started the coordinate over hands the same number to a different byte — no error,
+// and the consumer draws output from a place it never asked for.
+//
+// COMPONENT-HANDOFF H4 states it for a process replacement: a ring that restarted at zero stops
+// output without an error. A restore is the same coordinate and the same consumer.
+func TestARestoreContinuesTheSequenceRatherThanRestartingIt(t *testing.T) {
+	home := t.TempDir()
+	first := newRegistry("/bin/sh")
+	firstStore, err := newStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.attachStore(firstStore)
+	value, err := first.open(openRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := value.id
+
+	// Past the retained bound, so the stored output is a tail and not the whole session.
+	chunk := make([]byte, 64*1024)
+	for i := range chunk {
+		chunk[i] = 'a'
+	}
+	for written := 0; written < 3*outputSegmentBound; written += len(chunk) {
+		value.mu.Lock()
+		value.written = value.ring.write(chunk)
+		through := value.written
+		value.mu.Unlock()
+		if err := firstStore.append(id, chunk, through); err != nil {
+			t.Fatal(err)
+		}
+	}
+	value.mu.Lock()
+	before := value.written
+	value.mu.Unlock()
+	first.shutdown()
+	_ = firstStore.close()
+
+	second := newRegistry("/bin/sh")
+	secondStore, err := newStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = secondStore.close() })
+	second.attachStore(secondStore)
+	second.restore()
+	t.Cleanup(func() { second.shutdown() })
+
+	back, held := second.byID(id)
+	if !held {
+		t.Fatal("the session did not restore")
+	}
+	back.mu.Lock()
+	after := back.written
+	back.mu.Unlock()
+	if after < before {
+		t.Fatalf("the coordinate went backwards: before=%d after=%d", before, after)
+	}
+
+	// The retained output ends where the session ended, so a consumer asking for the last byte the
+	// session produced is asking inside the ring rather than past it.
+	floor, through, _ := back.ring.snapshot()
+	if through < before {
+		t.Fatalf("the ring ends at %d, before the %d the session reached", through, before)
+	}
+	if floor > before {
+		t.Fatalf("the ring starts at %d, past the %d the session reached", floor, before)
+	}
+}

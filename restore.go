@@ -129,10 +129,15 @@ func (reg *registry) restoreOne(held *store, id uint64) restoreOutcome {
 	// applies to a fresh mirror before it replays; put in the ring they would be replayed as output
 	// and drawn as the characters they are.
 	//
-	// The output the session produced is what a consumer replays to reach the screen it had. It sits
-	// ahead of anything the new shell writes, so an attach from sequence zero reads the whole
-	// session and not just what happened after this start.
-	value.written = value.ring.write(output)
+	// The output the session produced is what a consumer replays to reach the screen it had, and it
+	// stands at the coordinate the session left it at.
+	//
+	// A ring that started over would hand a coordinate a consumer already holds to a different byte
+	// — no error, and the consumer draws output from a place it never asked for. The record carries
+	// where the session reached, and the retained bytes end there.
+	value.ring.restore(output, record.Written)
+	_, through, _ := value.ring.snapshot()
+	value.written = through
 	reg.sessions[id] = value
 	processStarted := reg.processStarted
 	reg.mu.Unlock()

@@ -47,6 +47,26 @@ func newRing(capacity int) *ring {
 	return &ring{capacity: capacity, leases: make(map[string]*ringLease)}
 }
 
+// restore stands a ring up holding output a session already produced, at the coordinate that output
+// ends at.
+//
+// A sequence is a coordinate into one session's output and a consumer holds one across a restart. A
+// ring that started over would hand the same number to a different byte — no error, and the
+// consumer draws from a place it never asked for. So the floor is set behind the retained bytes
+// rather than at zero, and the coordinate the session reached is where the next byte goes.
+func (r *ring) restore(data []byte, through uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.bytes = append(r.bytes[:0], data...)
+	if through < uint64(len(data)) {
+		// A coordinate behind the bytes it is meant to end is one of the two being wrong, and the
+		// bytes are what a consumer reads. The coordinate follows them.
+		through = uint64(len(data))
+	}
+	r.floor = through - uint64(len(r.bytes))
+	r.trimLocked()
+}
+
 // write appends output and answers the sequence the next byte will carry.
 func (r *ring) write(data []byte) uint64 {
 	r.mu.Lock()

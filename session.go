@@ -285,18 +285,22 @@ func (value *session) pump() {
 	for {
 		count, err := value.process.Read(buffer)
 		if count > 0 {
-			// The store is a subscriber like any other and never pauses this loop. A write that
-			// fails costs the record's tail and is reported; it does not stop the shell.
+			value.mu.Lock()
+			from := value.written
+			value.written = value.ring.write(buffer[:count])
+			// The store takes the same bytes and the coordinate they end at. It is a subscriber like
+			// any other and never pauses this loop: a write that fails costs the record's tail and
+			// is reported, and the shell keeps running.
+			//
+			// After the ring rather than before, because the coordinate is what the ring answers and
+			// a store told a coordinate the ring had not reached would name a byte nobody wrote.
 			if value.store != nil {
-				if err := value.store.append(value.id, buffer[:count]); err != nil {
+				if err := value.store.append(value.id, buffer[:count], value.written); err != nil {
 					fmt.Fprintf(os.Stderr,
 						"soksak-sidecar-pty: session %d lost %d bytes of its record: %v\n",
 						value.id, count, err)
 				}
 			}
-			value.mu.Lock()
-			from := value.written
-			value.written = value.ring.write(buffer[:count])
 			value.writtenAt = value.stamp()
 			value.eventSequence++
 			eventSequence := value.eventSequence
@@ -714,7 +718,10 @@ func (reg *registry) shutdown() int {
 		// the mark it leaves is the only evidence that this exit was on purpose.
 		if held != nil {
 			at := reg.now().UnixMilli()
-			if err := held.markEnded(value.id, at, nil); err != nil {
+			value.mu.Lock()
+			through := value.written
+			value.mu.Unlock()
+			if err := held.markEnded(value.id, at, nil, through); err != nil {
 				fmt.Fprintf(os.Stderr,
 					"soksak-sidecar-pty: session %d stopped without its record marked: %v\n",
 					value.id, err)
