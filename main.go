@@ -81,17 +81,6 @@ func run(home, runtimeRoot, shell, processLabel, sidecarName string) error {
 	}
 	defer func() { _ = sessions.close() }()
 
-	// This daemon starts holding no session, so every record it finds is one no session names.
-	// Nothing removes a record on its own, and a daemon that never swept would grow its store by
-	// every session that ever ran here.
-	swept, err := sessions.sweep(nil)
-	if err != nil {
-		return fmt.Errorf("sweeping the session store: %w", err)
-	}
-	if swept > 0 {
-		fmt.Fprintf(os.Stderr, "soksak-sidecar-pty: removed %d record(s) no session names\n", swept)
-	}
-
 	d := &daemon{
 		registry: newRegistry(shell), token: token, home: home,
 		identity: sidecarName, processLabel: processLabel,
@@ -99,6 +88,14 @@ func run(home, runtimeRoot, shell, processLabel, sidecarName string) error {
 	}
 	d.registry.attachStore(sessions)
 	d.startProcessMonitoring()
+
+	// Every record this daemon finds is a session the previous one held. Standing them back up is
+	// what makes a session outlive the process, and it comes before anything serves: a caller that
+	// reached a pane mid-restore would open a second session for it.
+	for _, outcome := range d.registry.restore() {
+		fmt.Fprintf(os.Stderr, "soksak-sidecar-pty: session %d restored %s\n",
+			outcome.Session, outcome.Outcome)
+	}
 
 	// One socket. A stream is a connection that stopped being request and response, not a second
 	// place — and a second address would be a second thing every peer derives, a second bind to get
