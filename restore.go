@@ -82,7 +82,7 @@ func (reg *registry) restoreOne(held *store, id uint64) restoreOutcome {
 	}
 	// Only what the ring will keep. Reading both segments whole hands over up to 8 MiB so that the
 	// ring can drop 7 of them, on the start path the launcher waits on.
-	output, err := held.output(id, ptycontract.HighWatermark)
+	output, through, err := held.output(id, ptycontract.HighWatermark)
 	if err != nil {
 		return restoreOutcome{Session: sessionText(id), Outcome: restoreFailed, Reason: err.Error()}
 	}
@@ -135,11 +135,11 @@ func (reg *registry) restoreOne(held *store, id uint64) restoreOutcome {
 	// stands at the coordinate the session left it at.
 	//
 	// A ring that started over would hand a coordinate a consumer already holds to a different byte
-	// — no error, and the consumer draws output from a place it never asked for. The record carries
-	// where the session reached, and the retained bytes end there.
-	value.ring.restore(output, record.Written)
-	_, through, _ := value.ring.snapshot()
-	value.written = through
+	// — no error, and the consumer draws output from a place it never asked for. The store answers
+	// where its bytes end, and the retained bytes end there.
+	value.ring.restore(output, through)
+	_, live, _ := value.ring.snapshot()
+	value.written = live
 	reg.sessions[id] = value
 	processStarted := reg.processStarted
 	reg.mu.Unlock()

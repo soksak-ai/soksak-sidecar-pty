@@ -47,9 +47,13 @@ type sessionRecord struct {
 	ExitCode      *int64 `json:"exitCode,omitempty"`
 	// Segment is which output file is being appended to. A reader takes the other one first.
 	Segment int `json:"segment"`
-	// Written is the coordinate this session's output reached, counting every byte it produced and
-	// not only the bytes still retained. A consumer holds one of these across a restart, so a
-	// restore that started it over would hand the same number to a different byte.
+	// Written is the coordinate at which the segment named above begins — not the coordinate the
+	// session reached. The total is that plus the segment's size, and output() derives it, so it is
+	// right after a crash as after a stop and there is no second field to disagree with.
+	//
+	// A consumer holds one of these across a restart, so a restore that started it over would hand
+	// the same number to a different byte. Written once per rotation rather than per chunk: a write
+	// per chunk is the record rewritten as fast as the shell speaks.
 	Written uint64 `json:"written"`
 	// Foreground is the program that was running in the session, and ForegroundCWD is where it ran.
 	// Command is the login shell this daemon started, which a restore starts again on its own; this
@@ -188,9 +192,8 @@ func (s *store) markEnded(id uint64, at int64, exitCode *int64, through uint64) 
 	if err != nil {
 		return err
 	}
-	// The stop write carries the coordinate the session reached. Between rotations the record holds
-	// the one the last rotation left, and a stop is where that catches up.
-	record.Written = through
+	// Written is not touched. It marks where the current segment begins, which a stop does not
+	// move, and output() derives the total from it and the segment's size.
 	if segment >= 0 {
 		record.Segment = segment
 	}
@@ -222,24 +225,6 @@ func (s *store) setForeground(id uint64, command, cwd string) error {
 		return err
 	}
 	record.Foreground, record.ForegroundCWD = command, cwd
-	return s.write(record)
-}
-
-// setWritten records the coordinate this session's output reached.
-//
-// Written on the same rotation the output is, rather than on every append: a write per byte chunk
-// would be a record rewritten as fast as the shell speaks. What a crash costs is the coordinate
-// moving back to the last rotation, and a consumer reading from behind where it left off draws
-// output it has seen rather than output it never will.
-func (s *store) setWritten(id uint64, through uint64) error {
-	lock := s.recordLock(id)
-	lock.Lock()
-	defer lock.Unlock()
-	record, err := s.read(id)
-	if err != nil {
-		return err
-	}
-	record.Written = through
 	return s.write(record)
 }
 
@@ -276,7 +261,9 @@ func (s *store) append(id uint64, data []byte, through uint64) error {
 		}
 	}
 	if writer.written+len(data) > outputSegmentBound && writer.written > 0 {
-		if err := s.roll(id, writer, through); err != nil {
+		// The boundary, not the coordinate past this chunk: the chunk goes into the new segment, so
+		// the segment begins where the chunk begins.
+		if err := s.roll(id, writer, through-uint64(len(data))); err != nil {
 			return err
 		}
 	}
@@ -287,7 +274,7 @@ func (s *store) append(id uint64, data []byte, through uint64) error {
 
 // roll moves to the other segment and drops what was there. The dropped segment is the older half
 // of the retained output, which is what the bound gives up. The caller holds the writer's lock.
-func (s *store) roll(id uint64, writer *segmentWriter, through uint64) error {
+func (s *store) roll(id uint64, writer *segmentWriter, at uint64) error {
 	next := 1 - writer.segment
 	_ = writer.file.Close()
 	writer.file = nil
@@ -299,7 +286,7 @@ func (s *store) roll(id uint64, writer *segmentWriter, through uint64) error {
 	record, err := s.read(id)
 	if err == nil {
 		record.Segment = next
-		record.Written = through
+		record.Written = at
 		err = s.write(record)
 	}
 	lock.Unlock()
@@ -329,10 +316,10 @@ func (s *store) openInto(writer *segmentWriter, id uint64, segment int) error {
 
 // output returns the retained output oldest first. The record names the segment being appended to,
 // so the other one holds what came before it.
-func (s *store) output(id uint64, atMost int) ([]byte, error) {
+func (s *store) output(id uint64, atMost int) ([]byte, uint64, error) {
 	record, err := s.read(id)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if writer := s.heldWriter(id); writer != nil {
 		writer.mu.Lock()
@@ -344,15 +331,36 @@ func (s *store) output(id uint64, atMost int) ([]byte, error) {
 	// Newest first, then as much of the older half as the caller still has room for. The caller
 	// says how much tail it can hold rather than this reading both segments whole — up to 8 MiB —
 	// for a consumer that keeps 1 MB of it and drops the rest one line later.
-	newer, err := s.tail(s.segmentPath(id, record.Segment), atMost)
+	current := s.segmentPath(id, record.Segment)
+	size, err := s.size(current)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	newer, err := s.tail(current, atMost)
+	if err != nil {
+		return nil, 0, err
 	}
 	older, err := s.tail(s.segmentPath(id, 1-record.Segment), atMost-len(newer))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return append(older, newer...), nil
+	// Where the current segment begins, plus what is in it. Derived rather than recorded, so a
+	// crash between rotations loses nothing: the record holds the boundary and the file holds the
+	// rest.
+	return append(older, newer...), record.Written + uint64(size), nil
+}
+
+// size is how many bytes one segment holds. A segment that is not there holds none, which is the
+// ordinary state of the half a rotation dropped.
+func (s *store) size(path string) (int64, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return info.Size(), nil
 }
 
 // tail reads the last atMost bytes of one segment. A segment that is not there is no output, which

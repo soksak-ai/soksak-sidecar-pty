@@ -63,7 +63,7 @@ func TestOutputReachesTheStoreWhileTheSessionRuns(t *testing.T) {
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		output, err := store.output(value.id, 2*outputSegmentBound)
+		output, _, err := store.output(value.id, 2*outputSegmentBound)
 		if err == nil && len(output) > 0 && contains(output, "stored-marker") {
 			return
 		}
