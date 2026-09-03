@@ -67,3 +67,14 @@ func TestGenerationsDifferAcrossRegistryInstances(t *testing.T) {
 		t.Fatalf("two registries started at the same generation %d", first.generation)
 	}
 }
+
+// A session id names a record on disk. A counter that starts at zero on every boot hands the second
+// boot the ids the first boot used, and a record the first boot left is then read as the second
+// boot's own. SESSION.md S2-3 requires the form not to repeat across the owner's restarts.
+func TestSessionIdsDifferAcrossRegistryInstances(t *testing.T) {
+	first := newRegistry("/bin/sh")
+	second := newRegistry("/bin/sh")
+	if first.next == second.next {
+		t.Fatalf("two registries start issuing at the same id %d", first.next)
+	}
+}

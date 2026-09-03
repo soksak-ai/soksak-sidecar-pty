@@ -117,26 +117,34 @@ func (reg *registry) bindProcessLifecycle(
 
 const defaultAbandonAfter = 30 * time.Minute
 
-// randomGenerationSeed draws the instance's generation floor. Randomness
+// seedCeiling bounds a counter's floor. Both counters travel as JSON numbers, and a generic
+// parser holds a JSON number as a float64, which is exact to 2^53. A floor under 2^48 stays exact
+// and leaves 2^53-2^48 of counting room, which no daemon reaches.
+const seedCeiling = uint64(1) << 48
+
+// randomInstanceSeed draws a floor for one of this instance's counters. Randomness
 // rather than the clock: two instances created in the same nanosecond are the
 // same seed, and the tests meet exactly that.
-func randomGenerationSeed() uint64 {
+func randomInstanceSeed() uint64 {
 	var bytes [8]byte
 	if _, err := rand.Read(bytes[:]); err != nil {
-		return uint64(time.Now().UnixNano())
+		return uint64(time.Now().UnixNano()) % seedCeiling
 	}
-	return binary.BigEndian.Uint64(bytes[:])
+	return binary.BigEndian.Uint64(bytes[:]) % seedCeiling
 }
 
 func newRegistry(shell string) *registry {
 	return &registry{
 		sessions: make(map[uint64]*session), shell: shell,
 		abandonAfter: defaultAbandonAfter, now: time.Now,
-		// The generation space is seeded per daemon instance. A counter that
+		// Both counters are seeded per daemon instance. A generation counter that
 		// started at zero every boot handed the same generation to the same
 		// pane on every restart, and a screen archived under it stood back up
-		// under a shell it never belonged to.
-		generation: randomGenerationSeed(),
+		// under a shell it never belonged to. A session id names a record that
+		// outlives this process, so a repeated id makes one boot read the
+		// previous boot's record as its own.
+		generation: randomInstanceSeed(),
+		next:       randomInstanceSeed(),
 	}
 }
 

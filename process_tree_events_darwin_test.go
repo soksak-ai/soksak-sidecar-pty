@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -60,8 +61,9 @@ func TestDarwinProcessObserveStreamsLiveDescendantLifecycleWithoutPolling(t *tes
 	}
 	revision := uint64(1)
 	rootStarted := readProcessEvent(t, reader)
+	rootID := fmt.Sprintf("pty-session-%d", value.id)
 	if rootStarted.Revision != revision || rootStarted.Kind != ptycontract.ProcessStarted ||
-		rootStarted.Process.ID != "pty-session-1" {
+		rootStarted.Process.ID != rootID {
 		t.Fatalf("root started=%+v", rootStarted)
 	}
 
