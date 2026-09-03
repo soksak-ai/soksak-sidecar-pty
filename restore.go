@@ -146,8 +146,17 @@ func (reg *registry) restoreOne(held *store, id uint64) restoreOutcome {
 
 	// This session is running again, so its record must read as a crash if this process now dies.
 	// Leaving the previous stop's mark would report a clean end this process never made.
+	//
+	// S6-1 defines full as marked cleanly ended *and its state restored*. The mark alone was the
+	// whole test, so a record whose segments were lost — an interrupted close, an external cleanup,
+	// a partial copy of the home — came back full with nothing in it and the attached consumer
+	// resumed against a session with no history.
+	//
+	// The stop recorded where the session had reached. Output that no longer reaches it is state
+	// the record says existed and does not, which is degraded: the session is here and some of its
+	// state is not.
 	outcome := restoreDegraded
-	if record.EndedAtUnixMs != nil {
+	if record.EndedAtUnixMs != nil && through >= record.EndedThrough {
 		outcome = restoreFull
 	}
 	record.EndedAtUnixMs = nil

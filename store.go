@@ -45,6 +45,14 @@ type sessionRecord struct {
 	// that the owner ended without warning.
 	EndedAtUnixMs *int64 `json:"endedAtUnixMs,omitempty"`
 	ExitCode      *int64 `json:"exitCode,omitempty"`
+	// EndedThrough is the coordinate the session had reached when it was stopped. It is the stop's
+	// evidence of how much state there was, and a restore compares what it found against it: output
+	// that no longer reaches this coordinate is state the record says existed and does not.
+	//
+	// Written only by the stop, because the stop is the only point that both knows the total and is
+	// a place worth paying a write. Absent on a record no stop reached, where there is nothing to
+	// compare against because the crash is itself the reason state is missing.
+	EndedThrough uint64 `json:"endedThrough,omitempty"`
 	// Segment is which output file is being appended to. A reader takes the other one first.
 	Segment int `json:"segment"`
 	// Written is the coordinate at which the segment named above begins — not the coordinate the
@@ -194,6 +202,7 @@ func (s *store) markEnded(id uint64, at int64, exitCode *int64, through uint64) 
 	}
 	// Written is not touched. It marks where the current segment begins, which a stop does not
 	// move, and output() derives the total from it and the segment's size.
+	record.EndedThrough = through
 	if segment >= 0 {
 		record.Segment = segment
 	}
