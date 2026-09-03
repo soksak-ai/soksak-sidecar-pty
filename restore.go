@@ -3,26 +3,20 @@ package main
 import (
 	"fmt"
 	"os"
+	"sort"
 
 	ptycontract "github.com/soksak-ai/soksak-contract-pty"
 )
 
-// The outcomes a start reports for one session. A stop marked the record, so its state is what the
-// stop wrote; an unmarked record ends wherever the last append reached and nothing states where it
-// was meant to end.
+// The outcomes are the wire's. A second set of names here would be a second answer to what a start
+// ended in, and the two would disagree the first time one of them changed.
 const (
-	restoreFull     = "full"
-	restoreDegraded = "degraded"
-	restoreFailed   = "failed"
+	restoreFull     = ptycontract.RestoreFull
+	restoreDegraded = ptycontract.RestoreDegraded
+	restoreFailed   = ptycontract.RestoreFailed
 )
 
-// restoreOutcome is what a start reports per session in the store.
-type restoreOutcome struct {
-	Session uint64
-	Outcome string
-	// Reason is what stopped a failed restore. Empty otherwise.
-	Reason string
-}
+type restoreOutcome = ptycontract.SessionRestore
 
 // restore reads this owner's records and stands each session back up.
 //
@@ -35,6 +29,7 @@ type restoreOutcome struct {
 func (reg *registry) restore() []restoreOutcome {
 	held := reg.sessionStore()
 	if held == nil {
+		reg.markStoreRead()
 		return nil
 	}
 	ids, err := held.list()
@@ -47,6 +42,7 @@ func (reg *registry) restore() []restoreOutcome {
 	for _, id := range ids {
 		outcome := reg.restoreOne(held, id)
 		outcomes = append(outcomes, outcome)
+		reg.recordOutcome(outcome)
 		if outcome.Outcome == restoreFailed {
 			// The record stays. It is the only evidence of what was lost, and a later start with a
 			// reader that works may stand it up.
@@ -54,7 +50,16 @@ func (reg *registry) restore() []restoreOutcome {
 				id, outcome.Reason)
 		}
 	}
+	reg.markStoreRead()
 	return outcomes
+}
+
+// markStoreRead states that every record was looked at. Until it runs, a report is unfinished and a
+// caller must not count anything lost from it.
+func (reg *registry) markStoreRead() {
+	reg.mu.Lock()
+	reg.readStore = true
+	reg.mu.Unlock()
 }
 
 func (reg *registry) restoreOne(held *store, id uint64) restoreOutcome {
@@ -152,4 +157,63 @@ func (reg *registry) byID(id uint64) (*session, bool) {
 	defer reg.mu.Unlock()
 	value, held := reg.sessions[id]
 	return value, held
+}
+
+// recordOutcome keeps what a start ended in for one session, so a caller reads the same answer
+// however long after the start it asks.
+func (reg *registry) recordOutcome(outcome restoreOutcome) {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if reg.outcomes == nil {
+		reg.outcomes = make(map[uint64]restoreOutcome)
+	}
+	reg.outcomes[outcome.Session] = outcome
+}
+
+// restoreReport answers what became of each session the caller names. An empty list asks for every
+// session this daemon knows of, which is what a caller with no index of its own reads.
+//
+// A session this daemon holds but has no start outcome for was opened here rather than restored.
+// Nothing about a previous process is claimed for it: its state is what this process wrote.
+func (reg *registry) restoreReport(named []uint64) ptycontract.RestoreReport {
+	reg.mu.Lock()
+	complete := reg.readStore
+	if len(named) == 0 {
+		named = make([]uint64, 0, len(reg.sessions)+len(reg.outcomes))
+		seen := make(map[uint64]bool, len(reg.sessions)+len(reg.outcomes))
+		for id := range reg.sessions {
+			named = append(named, id)
+			seen[id] = true
+		}
+		for id := range reg.outcomes {
+			if !seen[id] {
+				named = append(named, id)
+			}
+		}
+	}
+	outcomes := make([]ptycontract.SessionRestore, 0, len(named))
+	for _, id := range named {
+		if outcome, held := reg.outcomes[id]; held {
+			outcomes = append(outcomes, outcome)
+			continue
+		}
+		if _, held := reg.sessions[id]; held {
+			outcomes = append(outcomes, ptycontract.SessionRestore{
+				Session: id, Outcome: ptycontract.RestoreFull,
+			})
+			continue
+		}
+		outcomes = append(outcomes, ptycontract.SessionRestore{
+			Session: id, Outcome: ptycontract.RestoreLost,
+		})
+	}
+	reg.mu.Unlock()
+	sortOutcomes(outcomes)
+	return ptycontract.RestoreReport{Complete: complete, Outcomes: outcomes}
+}
+
+func sortOutcomes(outcomes []ptycontract.SessionRestore) {
+	sort.Slice(outcomes, func(left, right int) bool {
+		return outcomes[left].Session < outcomes[right].Session
+	})
 }

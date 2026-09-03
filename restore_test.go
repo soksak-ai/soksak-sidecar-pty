@@ -154,3 +154,75 @@ func replayOf(t *testing.T, value *session) []byte {
 }
 
 var _ = ptycontract.Open{}
+
+// A caller holding an index asks what became of each session in it. A session this daemon restored
+// answers with how it restored; one it holds no record for answers lost.
+func TestTheReportAnswersForEverySessionTheCallerNames(t *testing.T) {
+	home := t.TempDir()
+	first := newRegistry("/bin/sh")
+	firstStore, err := newStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.attachStore(firstStore)
+	value, err := first.open(openRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := value.id
+	first.shutdown()
+	_ = firstStore.close()
+
+	second := newRegistry("/bin/sh")
+	secondStore, err := newStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = secondStore.close() })
+	second.attachStore(secondStore)
+	second.restore()
+	t.Cleanup(func() { second.shutdown() })
+
+	gone := restored + 1
+	report := second.restoreReport([]uint64{restored, gone})
+	if !report.Complete {
+		t.Fatal("a daemon that read its store through reports the read as unfinished")
+	}
+	byID := map[uint64]string{}
+	for _, outcome := range report.Outcomes {
+		byID[outcome.Session] = outcome.Outcome
+	}
+	if byID[restored] != ptycontract.RestoreFull {
+		t.Fatalf("the restored session reports %q", byID[restored])
+	}
+	if byID[gone] != ptycontract.RestoreLost {
+		t.Fatalf("a session with no record reports %q, not lost", byID[gone])
+	}
+}
+
+// A caller with no index of its own names nothing and reads every session this daemon knows of.
+func TestAnEmptyRequestReportsEverySessionTheDaemonKnows(t *testing.T) {
+	home := t.TempDir()
+	reg := newRegistry("/bin/sh")
+	value, err := newStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = value.close() })
+	reg.attachStore(value)
+	opened, err := reg.open(openRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { reg.shutdown() })
+
+	report := reg.restoreReport(nil)
+	if len(report.Outcomes) != 1 || report.Outcomes[0].Session != opened.id {
+		t.Fatalf("an empty request reported %+v", report.Outcomes)
+	}
+	// This session was opened here rather than restored, so nothing about a previous process is
+	// claimed for it.
+	if report.Outcomes[0].Outcome != ptycontract.RestoreFull {
+		t.Fatalf("a session this daemon opened reports %q", report.Outcomes[0].Outcome)
+	}
+}

@@ -102,6 +102,12 @@ type registry struct {
 	// store is where a session's state outlives this process. A registry without one keeps its
 	// sessions in memory alone, which is what every test that does not exercise the store wants.
 	store *store
+	// outcomes is what the start ended in per session, so a caller reads the same answer however
+	// long after the start it asks.
+	outcomes map[uint64]restoreOutcome
+	// readStore states that the store was read through. A caller that took an unfinished report as
+	// final would count a session lost this daemon had not looked for yet.
+	readStore bool
 }
 
 // attachStore gives this registry the place its sessions outlive it in.

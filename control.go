@@ -65,6 +65,7 @@ func (d *daemon) commands() map[string]handler {
 		ptycontract.CommandPane:             d.pane,
 		ptycontract.CommandCloseWindow:      d.closeWindow,
 		ptycontract.CommandStatus:           d.status,
+		ptycontract.CommandRestored:         d.restored,
 		ptycontract.CommandLease:            d.lease,
 		ptycontract.CommandDetachRenderer:   d.detachRenderer,
 		ptycontract.CommandPrepareObserver:  d.prepareObserver,
@@ -704,6 +705,16 @@ func (d *daemon) status(map[string]json.RawMessage) (string, any, error) {
 		Handoff:  ptycontract.HandoffNone,
 		Sessions: d.registry.list(),
 	}, nil
+}
+
+// restored answers what became of each session the caller names. It starts no process and ends
+// none: a caller reconciling its index must be able to ask without changing what it is asking about.
+func (d *daemon) restored(args map[string]json.RawMessage) (string, any, error) {
+	request, err := decode[ptycontract.Restored](args)
+	if err != nil {
+		return "ARGUMENT", nil, err
+	}
+	return "", d.registry.restoreReport(request.Sessions), nil
 }
 
 func (d *daemon) pane(args map[string]json.RawMessage) (string, any, error) {
