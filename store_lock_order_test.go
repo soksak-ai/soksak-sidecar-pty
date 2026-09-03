@@ -98,3 +98,47 @@ func TestNoHolderOfTheRecordLockTakesTheWriterLock(t *testing.T) {
 			strings.Join(offenders, "\n"))
 	}
 }
+
+// The stop write is the one that reaches the platter.
+//
+// S4-5 splits the two: an ordinary record write goes as far as the operating system, because a
+// process exit is what it has to survive; the stop write is forced down, because a power cycle is
+// what it has to survive and page cache does not.
+//
+// Measured in the source because a test cannot observe an fsync. What it can observe is which path
+// each writer takes, and the failure it prevents is the one that was here: markEnded synced the
+// output segment and then wrote the record through the unsynced path, so the end mark and the
+// coordinate — the whole evidence of a clean stop — were exactly the bytes a power cycle loses.
+func TestOnlyTheStopWriteIsForcedToThePlatter(t *testing.T) {
+	body, err := os.ReadFile("store.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+
+	if !strings.Contains(source, "func (s *store) writeDurable(") {
+		t.Fatal("there is no durable write for the stop to take")
+	}
+	// The durable path forces the staged file and the directory the rename lands in. A rename left
+	// in page cache leaves the record under its staged name, which list() does not look for.
+	for _, required := range []string{"staged.Sync()", "func (s *store) syncDir()", "dir.Sync()"} {
+		if !strings.Contains(source, required) {
+			t.Errorf("the durable write does not force %s", required)
+		}
+	}
+
+	var durable []string
+	function := ""
+	for _, line := range strings.Split(source, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "func (s *store)") {
+			function = trimmed
+		}
+		if strings.Contains(trimmed, "s.writeDurable(") && !strings.HasPrefix(function, "func (s *store) writeDurable(") {
+			durable = append(durable, function)
+		}
+	}
+	if len(durable) != 1 || !strings.HasPrefix(durable[0], "func (s *store) markEnded(") {
+		t.Errorf("the durable write is taken by %v, want the stop write alone", durable)
+	}
+}

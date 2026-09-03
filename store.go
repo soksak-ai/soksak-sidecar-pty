@@ -147,7 +147,23 @@ func (s *store) create(record sessionRecord) error {
 }
 
 // write replaces the record atomically. A reader never sees a partial one.
-func (s *store) write(record sessionRecord) error {
+// write publishes a record. It goes as far as the operating system and is not forced to the
+// platter: that is what a process exit needs, and a process exit is what most restores recover from.
+func (s *store) write(record sessionRecord) error { return s.publish(record, false) }
+
+// writeDurable publishes a record and forces it to the platter, the staged file and the directory
+// the rename lands in.
+//
+// The stop write takes this path. A stop is the point a power cycle recovers from, and page cache
+// does not survive one — so the end mark and the coordinate the session reached, which are the whole
+// evidence of a clean stop, would be exactly the bytes lost. The restore would then answer degraded,
+// which is the case the stop write exists to prevent (S6-2).
+//
+// The directory as well as the file: a rename that has not reached the platter leaves the record
+// under its staged name, where list() does not look for it.
+func (s *store) writeDurable(record sessionRecord) error { return s.publish(record, true) }
+
+func (s *store) publish(record sessionRecord, durable bool) error {
 	body, err := json.Marshal(record)
 	if err != nil {
 		return err
@@ -166,6 +182,13 @@ func (s *store) write(record sessionRecord) error {
 		os.Remove(name)
 		return err
 	}
+	if durable {
+		if err := staged.Sync(); err != nil {
+			staged.Close()
+			os.Remove(name)
+			return err
+		}
+	}
 	if err := staged.Close(); err != nil {
 		os.Remove(name)
 		return err
@@ -174,7 +197,21 @@ func (s *store) write(record sessionRecord) error {
 		os.Remove(name)
 		return err
 	}
+	if durable {
+		return s.syncDir()
+	}
 	return nil
+}
+
+// syncDir forces the directory entry the rename made. Without it the rename is in page cache and a
+// power cycle can leave the record under its staged name, which list() does not look for.
+func (s *store) syncDir() error {
+	dir, err := os.Open(s.dir)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
 // read returns one session's record. A record whose stated id does not match the path it was found
@@ -229,7 +266,7 @@ func (s *store) markEnded(id uint64, at int64, exitCode *int64, through uint64) 
 	}
 	record.EndedAtUnixMs = &at
 	record.ExitCode = exitCode
-	return s.write(record)
+	return s.writeDurable(record)
 }
 
 // writerFor returns this session's writer, opening it on first use. Only the map is guarded here.
