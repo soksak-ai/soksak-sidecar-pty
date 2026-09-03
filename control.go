@@ -66,6 +66,7 @@ func (d *daemon) commands() map[string]handler {
 		ptycontract.CommandCloseWindow:      d.closeWindow,
 		ptycontract.CommandStatus:           d.status,
 		controlwire.SessionsCommand:         d.sessionReport,
+		controlwire.SessionCloseCommand:     d.sessionClose,
 		ptycontract.CommandLease:            d.lease,
 		ptycontract.CommandDetachRenderer:   d.detachRenderer,
 		ptycontract.CommandPrepareObserver:  d.prepareObserver,
@@ -715,6 +716,16 @@ func (d *daemon) sessionReport(args map[string]json.RawMessage) (string, any, er
 		return "ARGUMENT", nil, err
 	}
 	return "", d.registry.restoreReport(request.Sessions), nil
+}
+
+// sessionClose ends one session. Closing is an explicit act on that session: nothing else ends one,
+// and a window or a pane going away detaches what it held rather than closing it.
+func (d *daemon) sessionClose(args map[string]json.RawMessage) (string, any, error) {
+	request, err := decode[controlwire.SessionCloseRequest](args)
+	if err != nil {
+		return "ARGUMENT", nil, err
+	}
+	return "", d.registry.closeSession(request.Session), nil
 }
 
 func (d *daemon) pane(args map[string]json.RawMessage) (string, any, error) {

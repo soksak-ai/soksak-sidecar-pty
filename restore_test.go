@@ -227,3 +227,59 @@ func TestAnEmptyRequestReportsEverySessionTheDaemonKnows(t *testing.T) {
 		t.Fatalf("a session this daemon opened reports %q", report.Sessions[0].Outcome)
 	}
 }
+
+// Closing ends the session and removes its record. A session the record outlived is what a restore
+// stands back up, so a record left behind is a session that comes back after it was closed.
+func TestClosingRemovesTheRecord(t *testing.T) {
+	home := t.TempDir()
+	reg := newRegistry("/bin/sh")
+	value, err := newStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = value.close() })
+	reg.attachStore(value)
+	opened, err := reg.open(openRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := reg.closeSession(sessionText(opened.id))
+	if !result.Closed || !result.Held {
+		t.Fatalf("closing a held session answered %+v", result)
+	}
+	if _, err := value.read(opened.id); err == nil {
+		t.Fatal("the record outlived the session it was for")
+	}
+
+	second := newRegistry("/bin/sh")
+	secondStore, err := newStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = secondStore.close() })
+	second.attachStore(secondStore)
+	if outcomes := second.restore(); len(outcomes) != 0 {
+		t.Fatalf("a closed session came back: %+v", outcomes)
+	}
+}
+
+// A close of a session this daemon never held is not a failure. The outcome the caller wanted is the
+// outcome it has, and the answer separates that from ending a running one.
+func TestClosingASessionThisDaemonNeverHeldIsNotAFailure(t *testing.T) {
+	reg := newRegistry("/bin/sh")
+	value, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = value.close() })
+	reg.attachStore(value)
+
+	result := reg.closeSession("404")
+	if !result.Closed {
+		t.Fatalf("a close with nothing to end answered %+v", result)
+	}
+	if result.Held {
+		t.Fatal("a session this daemon never held is reported as held")
+	}
+}

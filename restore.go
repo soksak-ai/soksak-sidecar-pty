@@ -230,3 +230,32 @@ func (reg *registry) restoreReport(named []string) controlwire.SessionReport {
 	})
 	return controlwire.SessionReport{Complete: complete, Sessions: outcomes}
 }
+
+// forgetOutcome drops what a start ended in for a session that no longer exists. A closed session
+// reported by a later listing is one a caller goes looking for and does not find.
+func (reg *registry) forgetOutcome(id uint64) {
+	reg.mu.Lock()
+	delete(reg.outcomes, id)
+	reg.mu.Unlock()
+}
+
+// closeSession ends one session named the way the envelope names it.
+//
+// A session this daemon never held is not a failure: the outcome the caller wanted is the outcome
+// it has. The answer separates that from ending a running one, which a caller reconciling an index
+// reads differently even though both leave no record.
+func (reg *registry) closeSession(text string) controlwire.SessionCloseResult {
+	result := controlwire.SessionCloseResult{Session: text, Closed: true}
+	id, numeric := sessionNumber(text)
+	if !numeric {
+		return result
+	}
+	reg.mu.Lock()
+	_, held := reg.sessions[id]
+	reg.mu.Unlock()
+	result.Held = held
+	if err := reg.close(id); err != nil && held {
+		result.Closed = false
+	}
+	return result
+}

@@ -629,7 +629,17 @@ func (reg *registry) close(id uint64) error {
 	reg.mu.Lock()
 	value := reg.sessions[id]
 	delete(reg.sessions, id)
+	held := reg.store
 	reg.mu.Unlock()
+	// The record goes with the session. One left behind is a session a later start hands back after
+	// it was closed, and a closed session is not recoverable.
+	if held != nil {
+		if err := held.remove(id); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"soksak-sidecar-pty: session %d closed and its record remains: %v\n", id, err)
+		}
+	}
+	reg.forgetOutcome(id)
 	if value == nil {
 		return fmt.Errorf("no session %d in this daemon", id)
 	}
