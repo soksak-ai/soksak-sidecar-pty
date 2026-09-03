@@ -20,6 +20,7 @@ classifies none. The terminal mirror owns that.
 | `windowLabel` | session | The caller's other coordinate, reported in the inventory |
 | `cwd` | session | A creation fact. An equivalent shell starts in the same directory |
 | `command` | session | A creation fact. What was started |
+| `environment` | session | A creation fact. Without it a recreated shell starts under this daemon's environment rather than the one the caller named |
 | `startedAt` | session | When the work began. A new process would restamp it and lose that |
 | `generation` | process | Seeded per daemon instance so a restart hands no pane the generation it had. A restored session takes the new daemon's |
 | `process` | process | The running shell |
@@ -41,16 +42,18 @@ classifies none. The terminal mirror owns that.
 | `cols` | session | The size applied to the pty. A restore reapplies it |
 | `rows` | session | The size applied to the pty. A restore reapplies it |
 | `processEnded` | process | A callback into the registry |
+| `store` | process | The open handle this session appends through. What it writes survives; the handle does not |
 
 ## What S4-2 requires and this daemon does not hold
 
 `SESSION.md` S4-2 requires the creation facts to be enough to create an equivalent session: what
-was started, where, and with what environment. Two of the three are held.
+was started, where, and with what environment. All three are held; the exit status is not.
 
-- **The environment.** `openWithObserver` passes `sessionEnvironment(request.Environment,
-  request.EnvironmentDrop)` to `startSessionProcess` and retains nothing. A shell recreated from
-  this struct alone starts under this daemon's environment rather than the one the caller named.
-- **The exit status.** `processEnded` receives the code and the struct keeps none. S3 lists it as
-  session state.
+- **The exit status.** `processEnded` receives the code and the struct keeps none, so the record's
+  `exitCode` is written as absent. S3 lists it as session state.
 
-Both are item 3's work, not item 1's. This section records what that item has to add.
+## What the store holds and this struct does not
+
+`SESSION.md` S4-5 states two parts. The output is one and this daemon appends it. The modes are the
+other, and no field here holds them: this daemon parses no output, so a mode a program set is in
+no fact it has. The mirror that parses reports them, which is item 14.

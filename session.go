@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"os"
 	"sync"
 
 	ptycontract "github.com/soksak-ai/soksak-contract-pty"
@@ -77,6 +78,11 @@ type session struct {
 	cols          uint16
 	rows          uint16
 	processEnded  func(*session, int64)
+	// environment is what the caller named. Without it a session recreated from this record starts
+	// under whatever environment this daemon inherited, which is not what was asked for.
+	environment []string
+	// store is where this session's output is appended. Nil while no store is attached.
+	store *store
 }
 
 type registry struct {
@@ -93,6 +99,23 @@ type registry struct {
 	// can reach that shell, and it holds a process, its output ring and its file descriptors.
 	abandonAfter time.Duration
 	now          func() time.Time
+	// store is where a session's state outlives this process. A registry without one keeps its
+	// sessions in memory alone, which is what every test that does not exercise the store wants.
+	store *store
+}
+
+// attachStore gives this registry the place its sessions outlive it in.
+func (reg *registry) attachStore(value *store) {
+	reg.mu.Lock()
+	reg.store = value
+	reg.mu.Unlock()
+}
+
+// sessionStore reads the store without holding the registry lock through a file operation.
+func (reg *registry) sessionStore() *store {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	return reg.store
 }
 
 // bindProcessLifecycle installs the one process-ledger boundary before sessions are served. It
@@ -172,11 +195,10 @@ func (reg *registry) openWithObserver(
 		return nil, fmt.Errorf("no shell was named and this daemon derives none")
 	}
 
-	process, err := startSessionProcess(
-		shell, request.CWD,
-		sessionEnvironment(request.Environment, request.EnvironmentDrop),
-		request.Cols, request.Rows,
-	)
+	// One computation for both the process and the record. Two would be two answers waiting to
+	// disagree, and the record is what a recreated shell is started from.
+	environment := sessionEnvironment(request.Environment, request.EnvironmentDrop)
+	process, err := startSessionProcess(shell, request.CWD, environment, request.Cols, request.Rows)
 	if err != nil {
 		return nil, fmt.Errorf("open a session for pane %s: %w", request.PaneID, err)
 	}
@@ -208,6 +230,7 @@ func (reg *registry) openWithObserver(
 		resume:         make(chan struct{}, 1),
 		cols:           request.Cols,
 		rows:           request.Rows,
+		environment:    environment,
 		processEnded:   reg.processEnded,
 	}
 	if prepared != nil {
@@ -219,7 +242,19 @@ func (reg *registry) openWithObserver(
 	}
 	reg.sessions[value.id] = value
 	processStarted := reg.processStarted
+	value.store = reg.store
 	reg.mu.Unlock()
+
+	// The creation write comes before the pump. Everything a crash preserves starts here, so a
+	// session that produced nothing before the crash is still recreatable from it.
+	if value.store != nil {
+		if err := value.store.create(value.creationFacts()); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"soksak-sidecar-pty: session %d has no record and will not survive this process: %v\n",
+				value.id, err)
+			value.store = nil
+		}
+	}
 	if processStarted != nil {
 		processStarted(value)
 	}
@@ -244,6 +279,15 @@ func (value *session) pump() {
 	for {
 		count, err := value.process.Read(buffer)
 		if count > 0 {
+			// The store is a subscriber like any other and never pauses this loop. A write that
+			// fails costs the record's tail and is reported; it does not stop the shell.
+			if value.store != nil {
+				if err := value.store.append(value.id, buffer[:count]); err != nil {
+					fmt.Fprintf(os.Stderr,
+						"soksak-sidecar-pty: session %d lost %d bytes of its record: %v\n",
+						value.id, count, err)
+				}
+			}
 			value.mu.Lock()
 			from := value.written
 			value.written = value.ring.write(buffer[:count])
@@ -647,11 +691,31 @@ func (reg *registry) shutdown() int {
 		values = append(values, value)
 		delete(reg.sessions, id)
 	}
+	held := reg.store
 	reg.mu.Unlock()
 	for _, value := range values {
+		// The stop write comes before the reap. It is the point a power cycle recovers from, and
+		// the mark it leaves is the only evidence that this exit was on purpose.
+		if held != nil {
+			at := reg.now().UnixMilli()
+			if err := held.markEnded(value.id, at, nil); err != nil {
+				fmt.Fprintf(os.Stderr,
+					"soksak-sidecar-pty: session %d stopped without its record marked: %v\n",
+					value.id, err)
+			}
+		}
 		value.reap()
 	}
 	return len(values)
+}
+
+// creationFacts is what an equivalent session is created from.
+func (value *session) creationFacts() sessionRecord {
+	return sessionRecord{
+		Session: value.id, PaneID: value.paneID, WindowLabel: value.windowLabel,
+		CWD: value.cwd, Command: value.command, Environment: value.environment,
+		Cols: value.cols, Rows: value.rows, StartedAtUnixMs: value.startedAt.UnixMilli(),
+	}
 }
 
 // observerCounts reports, per session, how many observation consumers the pump

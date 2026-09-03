@@ -75,11 +75,29 @@ func run(home, runtimeRoot, shell, processLabel, sidecarName string) error {
 		return err
 	}
 
+	sessions, err := newStore(home)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = sessions.close() }()
+
+	// This daemon starts holding no session, so every record it finds is one no session names.
+	// Nothing removes a record on its own, and a daemon that never swept would grow its store by
+	// every session that ever ran here.
+	swept, err := sessions.sweep(nil)
+	if err != nil {
+		return fmt.Errorf("sweeping the session store: %w", err)
+	}
+	if swept > 0 {
+		fmt.Fprintf(os.Stderr, "soksak-sidecar-pty: removed %d record(s) no session names\n", swept)
+	}
+
 	d := &daemon{
 		registry: newRegistry(shell), token: token, home: home,
 		identity: sidecarName, processLabel: processLabel,
 		processTree: newProcessTreeReader(), processTreeEvents: newProcessTreeEventSource(),
 	}
+	d.registry.attachStore(sessions)
 	d.startProcessMonitoring()
 
 	// One socket. A stream is a connection that stopped being request and response, not a second
@@ -123,6 +141,8 @@ func run(home, runtimeRoot, shell, processLabel, sidecarName string) error {
 
 	close(sweepDone)
 	_ = control.Close()
+	// shutdown writes each record's end mark before it reaps. That mark is what separates this exit
+	// from a crash, and a restore reads nothing else to tell them apart.
 	ended := d.registry.shutdown()
 	fmt.Fprintf(os.Stderr, "soksak-sidecar-pty: ended %d session(s) on shutdown\n", ended)
 	return nil
