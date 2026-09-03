@@ -159,9 +159,7 @@ func (reg *registry) restoreOne(held *store, id uint64) restoreOutcome {
 	if record.EndedAtUnixMs != nil && through >= record.EndedThrough {
 		outcome = restoreFull
 	}
-	record.EndedAtUnixMs = nil
-	record.ExitCode = nil
-	if err := held.write(record); err != nil {
+	if err := held.clearStopMark(id); err != nil {
 		fmt.Fprintf(os.Stderr,
 			"soksak-sidecar-pty: session %d still carries its previous stop mark: %v\n", id, err)
 	}

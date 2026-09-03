@@ -113,6 +113,10 @@ func newStore(home string) (*store, error) {
 // through one temporary path named after the session alone, and two overlapping writes published a
 // splice of both — a record that does not parse, kept forever because S6-1 never deletes a failed
 // one.
+// A lock is never taken out of this map, not even by remove. A holder that removed its own entry
+// would leave the next caller creating a second lock for the same session, and two goroutines each
+// holding a different lock for one record is the state this map exists to prevent — which is
+// exactly the close-versus-write race. One mutex per session ever seen is the cost.
 func (s *store) recordLock(id uint64) *sync.Mutex {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -148,12 +152,29 @@ func (s *store) write(record sessionRecord) error {
 	if err != nil {
 		return err
 	}
+	// A neighbour per write, not per session. A shared name lets two writes of one record stage
+	// over each other and publish half of each — the same splice a plain write produces, one step
+	// later. The record lock orders the writers that take it; this holds for the ones that do not.
 	target := s.recordPath(record.Session)
-	temporary := target + ".next"
-	if err := os.WriteFile(temporary, append(body, '\n'), 0o600); err != nil {
+	staged, err := os.CreateTemp(s.dir, filepath.Base(target)+".*.next")
+	if err != nil {
 		return err
 	}
-	return os.Rename(temporary, target)
+	name := staged.Name()
+	if _, err := staged.Write(append(body, '\n')); err != nil {
+		staged.Close()
+		os.Remove(name)
+		return err
+	}
+	if err := staged.Close(); err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := os.Rename(name, target); err != nil {
+		os.Remove(name)
+		return err
+	}
+	return nil
 }
 
 // read returns one session's record. A record whose stated id does not match the path it was found
@@ -237,6 +258,25 @@ func (s *store) setForeground(id uint64, command, cwd string) error {
 	return s.write(record)
 }
 
+// clearStopMark takes the previous stop's mark off a record that is running again.
+//
+// A session standing back up must read as a crash if this process now dies: leaving the mark would
+// report a clean end this process never made. Under the record lock like every other record write,
+// so a restore does not race the writers that start as soon as the session is in the registry.
+func (s *store) clearStopMark(id uint64) error {
+	lock := s.recordLock(id)
+	lock.Lock()
+	defer lock.Unlock()
+	record, err := s.read(id)
+	if err != nil {
+		return err
+	}
+	record.EndedAtUnixMs = nil
+	record.ExitCode = nil
+	record.EndedThrough = 0
+	return s.write(record)
+}
+
 // setModes records the mode state for one session. Modes change when a program enters or leaves a
 // full-screen mode, which is rare, so this is written on change rather than on a cadence.
 func (s *store) setModes(id uint64, report []byte) error {
@@ -307,8 +347,11 @@ func (s *store) roll(id uint64, writer *segmentWriter, at uint64) error {
 
 // openInto opens one segment into the writer. The caller holds the writer's lock.
 func (s *store) openInto(writer *segmentWriter, id uint64, segment int) error {
+	// A segment outside the two refuses rather than being clamped. Clamping wrote the output to
+	// segment 0 while output() went on reading the recorded number, so the bytes landed in a file
+	// the reader never opens — a session that keeps running and silently stops being restorable.
 	if segment != 0 && segment != 1 {
-		segment = 0
+		return fmt.Errorf("session %d names segment %d, which is not one of the two", id, segment)
 	}
 	file, err := os.OpenFile(s.segmentPath(id, segment), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
