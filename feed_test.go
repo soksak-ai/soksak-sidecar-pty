@@ -84,3 +84,54 @@ func TestClosingTheFeedWaitsForWhatItAccepted(t *testing.T) {
 		t.Fatalf("%d of 20 chunks reached the store before the stop", landed)
 	}
 }
+
+// A drain that cannot finish does not hold the stop.
+//
+// The stop walks every session on one goroutine, so a drain that waits forever stops at the first
+// session whose store is not answering and no session after it gets a stop write either — the
+// daemon then has to be killed and every record comes back unmarked. That is the failure the lock
+// ordering above was fixed for, and an unbounded drain is the same thing through another door.
+//
+// What the deadline costs is the tail of one record, which a restore reports as degraded because
+// the recorded coordinate is past what the stored output reaches. What it buys is a stop that
+// finishes.
+func TestADrainThatCannotFinishDoesNotHoldTheStop(t *testing.T) {
+	stuck := make(chan struct{})
+	defer close(stuck)
+	feed := newStoreFeed(4, func([]byte, uint64) error {
+		<-stuck
+		return nil
+	})
+	feed.offer([]byte("a chunk the store will not take"), 31)
+
+	settled := make(chan struct{})
+	go func() { feed.closeWithin(200 * time.Millisecond); close(settled) }()
+	select {
+	case <-settled:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the stop waited on a drain that cannot finish")
+	}
+}
+
+// A drain that finishes inside its deadline is waited for.
+func TestADrainInsideItsDeadlineIsWaitedFor(t *testing.T) {
+	var mu sync.Mutex
+	landed := 0
+	feed := newStoreFeed(5, func([]byte, uint64) error {
+		time.Sleep(time.Millisecond)
+		mu.Lock()
+		defer mu.Unlock()
+		landed++
+		return nil
+	})
+	for round := uint64(1); round <= 20; round++ {
+		feed.offer([]byte("x"), round)
+	}
+	feed.closeWithin(10 * time.Second)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if landed != 20 {
+		t.Fatalf("%d of 20 chunks reached the store before the stop", landed)
+	}
+}

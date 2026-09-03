@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 )
 
 // feedDepth is how much output the store may fall behind by before bytes are dropped.
@@ -94,11 +95,27 @@ func (feed *storeFeed) run() {
 	}
 }
 
-// close stops the feed and waits for what it already accepted to reach the store.
+// drainDeadline is how long a stop waits for the queue to reach the store.
 //
-// The stop write follows this, and it records how far the session got. Writing it while chunks were
-// still queued would claim output the store does not hold.
-func (feed *storeFeed) close() {
+// Long enough for a slow disk to finish a queue this small, short enough that a store which has
+// stopped answering does not hold the stop. What waiting longer would buy is the tail of one
+// record; what it costs is every session after this one in the stop's order.
+const drainDeadline = 2 * time.Second
+
+// close stops the feed and waits for what it already accepted to reach the store.
+func (feed *storeFeed) close() { feed.closeWithin(drainDeadline) }
+
+// closeWithin stops the feed and waits up to a bound for what it already accepted.
+//
+// The stop write follows this and records how far the session got, so a drain that finished means
+// the stored output reaches that coordinate. A drain that did not is reported and the stop is
+// written anyway: the owner did stop on purpose, and a restore compares the recorded coordinate
+// against what the output reaches and answers degraded — which is the true state, where refusing
+// the mark would claim this owner crashed.
+//
+// Bounded because the stop walks every session on one goroutine. An unbounded wait stops at the
+// first session whose store is not answering, and no session after it gets a stop write at all.
+func (feed *storeFeed) closeWithin(within time.Duration) {
 	feed.mu.Lock()
 	if feed.closed {
 		feed.mu.Unlock()
@@ -107,5 +124,17 @@ func (feed *storeFeed) close() {
 	feed.closed = true
 	feed.ready.Broadcast()
 	feed.mu.Unlock()
-	feed.drained.Wait()
+
+	drained := make(chan struct{})
+	go func() { feed.drained.Wait(); close(drained) }()
+	select {
+	case <-drained:
+	case <-time.After(within):
+		feed.mu.Lock()
+		left := feed.queued
+		feed.mu.Unlock()
+		fmt.Fprintf(os.Stderr,
+			"soksak-sidecar-pty: session %d stopped with %d bytes still on the way to its record\n",
+			feed.name, left)
+	}
 }
