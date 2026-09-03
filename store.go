@@ -66,11 +66,12 @@ type sessionRecord struct {
 type store struct {
 	dir string
 
-	// mu guards the writer map and nothing else. A file write happens under the writer's own lock,
-	// so one session appending never pauses another: sixteen shells producing output would
-	// otherwise queue on one lock through sixteen disk writes.
-	mu   sync.Mutex
-	open map[uint64]*segmentWriter
+	// mu guards the two maps and nothing else. A file write happens under that session's own lock,
+	// so one session never pauses another: sixteen shells producing output would otherwise queue on
+	// one lock through sixteen disk writes.
+	mu      sync.Mutex
+	open    map[uint64]*segmentWriter
+	records map[uint64]*sync.Mutex
 }
 
 // segmentWriter appends to one session's current segment and rolls to the other at the bound.
@@ -86,7 +87,28 @@ func newStore(home string) (*store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("preparing the session store: %w", err)
 	}
-	return &store{dir: dir, open: make(map[uint64]*segmentWriter)}, nil
+	return &store{
+		dir:     dir,
+		open:    make(map[uint64]*segmentWriter),
+		records: make(map[uint64]*sync.Mutex),
+	}, nil
+}
+
+// recordLock serializes one session's record writes.
+//
+// S4-4 requires it: two writes for one session never interleave. Without it every writer went
+// through one temporary path named after the session alone, and two overlapping writes published a
+// splice of both — a record that does not parse, kept forever because S6-1 never deletes a failed
+// one.
+func (s *store) recordLock(id uint64) *sync.Mutex {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lock, held := s.records[id]
+	if !held {
+		lock = &sync.Mutex{}
+		s.records[id] = lock
+	}
+	return lock
 }
 
 func (s *store) recordPath(id uint64) string {
@@ -101,6 +123,9 @@ func (s *store) segmentPath(id uint64, segment int) string {
 // create writes the facts an equivalent session is made from. It leaves the record unmarked: only a
 // stop write marks one, and everything a crash preserves starts here.
 func (s *store) create(record sessionRecord) error {
+	lock := s.recordLock(record.Session)
+	lock.Lock()
+	defer lock.Unlock()
 	return s.write(record)
 }
 
@@ -137,6 +162,9 @@ func (s *store) read(id uint64) (sessionRecord, error) {
 
 // markEnded is the stop write. It states that this owner ended on purpose.
 func (s *store) markEnded(id uint64, at int64, exitCode *int64, through uint64) error {
+	lock := s.recordLock(id)
+	lock.Lock()
+	defer lock.Unlock()
 	record, err := s.read(id)
 	if err != nil {
 		return err
@@ -174,6 +202,9 @@ func (s *store) writerFor(id uint64) *segmentWriter {
 // setForeground records the program running in one session and where it ran. Empty clears it, which
 // is what a program exiting back to the shell leaves.
 func (s *store) setForeground(id uint64, command, cwd string) error {
+	lock := s.recordLock(id)
+	lock.Lock()
+	defer lock.Unlock()
 	record, err := s.read(id)
 	if err != nil {
 		return err
@@ -189,6 +220,9 @@ func (s *store) setForeground(id uint64, command, cwd string) error {
 // moving back to the last rotation, and a consumer reading from behind where it left off draws
 // output it has seen rather than output it never will.
 func (s *store) setWritten(id uint64, through uint64) error {
+	lock := s.recordLock(id)
+	lock.Lock()
+	defer lock.Unlock()
 	record, err := s.read(id)
 	if err != nil {
 		return err
@@ -200,6 +234,9 @@ func (s *store) setWritten(id uint64, through uint64) error {
 // setModes records the mode state for one session. Modes change when a program enters or leaves a
 // full-screen mode, which is rare, so this is written on change rather than on a cadence.
 func (s *store) setModes(id uint64, report []byte) error {
+	lock := s.recordLock(id)
+	lock.Lock()
+	defer lock.Unlock()
 	record, err := s.read(id)
 	if err != nil {
 		return err
@@ -245,13 +282,16 @@ func (s *store) roll(id uint64, writer *segmentWriter, through uint64) error {
 	if err := os.Remove(s.segmentPath(id, next)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	lock := s.recordLock(id)
+	lock.Lock()
 	record, err := s.read(id)
-	if err != nil {
-		return err
+	if err == nil {
+		record.Segment = next
+		record.Written = through
+		err = s.write(record)
 	}
-	record.Segment = next
-	record.Written = through
-	if err := s.write(record); err != nil {
+	lock.Unlock()
+	if err != nil {
 		return err
 	}
 	return s.openInto(writer, id, next)

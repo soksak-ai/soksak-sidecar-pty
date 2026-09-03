@@ -316,3 +316,37 @@ func TestASessionRunningOnlyItsShellRecordsNoProgram(t *testing.T) {
 		t.Fatalf("a session running only its shell recorded %q", record.Foreground)
 	}
 }
+
+// Two writers for one session never interleave (S4-4), and a reader never sees a partial record
+// (S4-3).
+//
+// Every record write went through one temporary path named after the session alone, and none held a
+// lock. Two overlapping writes truncated and wrote at their own offsets, and the rename published
+// one writer's prefix spliced onto the other's tail — a record that does not parse. S6-1 keeps a
+// failed record rather than deleting it, so the session's output and creation facts are lost on
+// disk with no path back.
+func TestTwoWritersForOneSessionNeverSplice(t *testing.T) {
+	store := newStoreAt(t)
+	if err := store.create(creationFacts(7)); err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("m", 4096)
+
+	for round := 0; round < 60; round++ {
+		var group sync.WaitGroup
+		group.Add(2)
+		go func() {
+			defer group.Done()
+			_ = store.setModes(7, []byte(long))
+		}()
+		go func() {
+			defer group.Done()
+			_ = store.setForeground(7, "vim", "/etc")
+		}()
+		group.Wait()
+
+		if _, err := store.read(7); err != nil {
+			t.Fatalf("round %d left an unreadable record: %v", round, err)
+		}
+	}
+}

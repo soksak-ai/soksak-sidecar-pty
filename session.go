@@ -340,7 +340,8 @@ func (value *session) pump() {
 		}
 		if err != nil {
 			value.ring.end()
-			value.reap()
+			// The shell exited, so this session is over.
+			value.reap(true)
 			return
 		}
 	}
@@ -583,13 +584,22 @@ func (value *session) ack(bytes uint64) {
 // The whole group, not the shell alone: a shell that started a build leaves it running when only
 // the shell is signalled, and what is left has no terminal, no parent watching it, and no way for
 // anyone to find it again.
-func (value *session) reap() {
+// reap ends this session's process.
+//
+// `ended` states whether the session itself is over. A shell that exited, an abandon sweep and a
+// close all end one, and the record goes with it — a record that outlived its session is a session
+// a later start stands back up after the person ended it (S3-1).
+//
+// A daemon stopping is the other case: the session is not over, its record is what a restore reads,
+// and taking it would turn every stop into a close.
+func (value *session) reap(ended bool) {
 	value.mu.Lock()
 	if value.closed {
 		value.mu.Unlock()
 		return
 	}
 	value.closed = true
+	held := value.store
 	value.eventSequence++
 	end := ptycontract.EndObservation{EventSequence: value.eventSequence}
 	for observer := range value.observers {
@@ -600,6 +610,16 @@ func (value *session) reap() {
 	value.mu.Unlock()
 	if processEnded != nil {
 		processEnded(value, endedAt)
+	}
+
+	// The record goes with the session, whichever way it ended. Only an explicit close removed one,
+	// so a shell exiting and the abandon sweep both left theirs — and the next start stood a brand
+	// new shell up for a session the person had ended. A closed session is not recoverable (S3-1).
+	if ended && held != nil {
+		if err := held.remove(value.id); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"soksak-sidecar-pty: session %d ended and its record remains: %v\n", value.id, err)
+		}
 	}
 
 	_ = value.process.Terminate()
@@ -629,7 +649,8 @@ func (reg *registry) endAbandoned() int {
 	}
 	reg.mu.Unlock()
 	for _, value := range abandoned {
-		value.reap()
+		// Nothing reattached inside the window, so the session is over.
+		value.reap(true)
 	}
 	return len(abandoned)
 }
@@ -662,7 +683,7 @@ func (reg *registry) close(id uint64) error {
 	if value == nil {
 		return fmt.Errorf("no session %d in this daemon", id)
 	}
-	value.reap()
+	value.reap(true)
 	return nil
 }
 
@@ -742,7 +763,9 @@ func (reg *registry) shutdown() int {
 					value.id, err)
 			}
 		}
-		value.reap()
+		// The daemon is stopping and the sessions are not. Their records are what the next start
+		// reads, and taking them would turn every stop into a close.
+		value.reap(false)
 	}
 	return len(values)
 }

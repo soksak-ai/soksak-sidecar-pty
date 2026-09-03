@@ -441,3 +441,77 @@ func TestAnIssuedIdNeverLandsOnARestoredOne(t *testing.T) {
 		t.Fatal("the session that held the id was replaced")
 	}
 }
+
+// A session that ended takes its record with it, whichever way it ended.
+//
+// Only reg.close removed a record. A shell exiting reaps, and the abandon sweep ends a session the
+// same way, and neither touched the store — so the next start found the record and spawned a brand
+// new shell for a session the person had ended. S3-1: a closed session is not recoverable.
+func TestAnEndedSessionTakesItsRecord(t *testing.T) {
+	home := t.TempDir()
+	first := newRegistry("/bin/sh")
+	firstStore, err := newStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.attachStore(firstStore)
+	value, err := first.open(openRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := value.id
+	if _, err := firstStore.read(id); err != nil {
+		t.Fatal(err)
+	}
+
+	// The shell exits. Nothing else happens: no close command, no shutdown.
+	value.reap(true)
+
+	if _, err := firstStore.read(id); err == nil {
+		t.Fatal("the record outlived the session that ended")
+	}
+	_ = firstStore.close()
+
+	second := newRegistry("/bin/sh")
+	secondStore, err := newStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = secondStore.close() })
+	second.attachStore(secondStore)
+	t.Cleanup(func() { second.shutdown() })
+	if outcomes := second.restore(); len(outcomes) != 0 {
+		t.Fatalf("a start stood an ended session back up: %+v", outcomes)
+	}
+}
+
+// The abandon sweep ends sessions, so it takes their records too.
+func TestTheAbandonSweepTakesTheRecord(t *testing.T) {
+	home := t.TempDir()
+	reg := newRegistry("/bin/sh")
+	store, err := newStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.close() })
+	reg.attachStore(store)
+	reg.abandonAfter = time.Nanosecond
+	value, err := reg.open(openRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := value.id
+	// The abandon clock starts when nothing is showing the session. A pane that went away is what
+	// puts it there; the test stamps it directly rather than staging a renderer.
+	value.mu.Lock()
+	value.detachedAt = time.Now().Add(-time.Second)
+	value.writtenAt = time.Time{}
+	value.mu.Unlock()
+
+	if ended := reg.endAbandoned(); ended != 1 {
+		t.Fatalf("the sweep ended %d sessions", ended)
+	}
+	if _, err := store.read(id); err == nil {
+		t.Fatal("the record outlived the session the sweep ended")
+	}
+}
