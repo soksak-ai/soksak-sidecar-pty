@@ -402,3 +402,42 @@ func TestARestoreContinuesTheSequenceRatherThanRestartingIt(t *testing.T) {
 		t.Fatalf("the ring starts at %d, past the %d the session reached", floor, before)
 	}
 }
+
+// An id a restored session holds is never issued again while that session lives.
+//
+// A restore registers under the id the session had and a new open counts up from this instance's
+// seed. The two spaces are drawn apart, but nothing stopped them from meeting: a collision would
+// have the map entry for a live session replaced by a new one, and the restored shell would be
+// running with nothing addressing it.
+func TestAnIssuedIdNeverLandsOnARestoredOne(t *testing.T) {
+	reg := newRegistry("/bin/sh")
+	value, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = value.close() })
+	reg.attachStore(value)
+
+	// A real session stands where the next open would otherwise land, the way a restored one does.
+	standing, err := reg.open(openRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { reg.shutdown() })
+	taken := standing.id
+	reg.mu.Lock()
+	reg.next = taken - 1
+	reg.mu.Unlock()
+
+	opened, err := reg.open(openRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened.id == taken {
+		t.Fatalf("a new session took the id %d another session holds", taken)
+	}
+	held, present := reg.byID(taken)
+	if !present || held != standing {
+		t.Fatal("the session that held the id was replaced")
+	}
+}

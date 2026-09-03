@@ -177,6 +177,22 @@ func newRegistry(shell string) *registry {
 	}
 }
 
+// issueLocked answers the next id this instance hands out, skipping any a session already holds.
+//
+// A restore registers under the id the session had, and this counts up from a seed drawn for this
+// instance. The two spaces are drawn apart and nothing stopped them from meeting: a collision would
+// replace a live session's map entry, leaving a shell running with nothing addressing it.
+//
+// The caller holds the registry lock.
+func (reg *registry) issueLocked() uint64 {
+	for {
+		reg.next++
+		if _, taken := reg.sessions[reg.next]; !taken {
+			return reg.next
+		}
+	}
+}
+
 // open starts a shell and returns its session.
 //
 // The shell, the environment and the working directory all arrive from the caller. Reading them
@@ -217,10 +233,9 @@ func (reg *registry) openWithObserver(
 		_ = process.Wait()
 		return nil, fmt.Errorf("this daemon is shutting down")
 	}
-	reg.next++
 	reg.generation++
 	value := &session{
-		id:             reg.next,
+		id:             reg.issueLocked(),
 		paneID:         request.PaneID,
 		windowLabel:    request.WindowLabel,
 		cwd:            request.CWD,
