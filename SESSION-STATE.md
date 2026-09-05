@@ -67,3 +67,14 @@ have to start themselves, and a restore never does it for them.
 They are a record and not output. A consumer reads them and applies them to a fresh mirror before it
 replays; put in the ring they would be replayed and drawn as the characters they are, over the
 screen they were meant to restore.
+
+## Where the next shell begins
+
+A restore starts a new shell after the output the previous one left, and that output ends where the
+session was cut: on a prompt, most of the time. Drawn straight on, the new shell's first prompt began
+on the old prompt's row; zsh marked the join with its end-of-line mark and a row of spaces that
+wrapped, every restart added one such row, and a narrower window reflowed each into a staircase
+(measured 2026-09-05, three panes). When the retained output does not end a line, the restore writes
+one line break (`\r\n`) into the ring before the shell's first byte and offers it to the store like
+any output, so the join is drawn the same way on this replay and on every later one. Output that
+already ended a line gets none.

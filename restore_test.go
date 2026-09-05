@@ -568,3 +568,81 @@ func TestARestoreReappliesTheSizeOfTheLastResize(t *testing.T) {
 		t.Fatalf("the restored session is %dx%d, not the 120x40 it was last sized to", back.cols, back.rows)
 	}
 }
+
+// The output a session was cut on ends where its shell was: on a prompt, most of the time. The next
+// shell's first prompt drawn straight after it began on the same row, and zsh marked the join with
+// its end-of-line mark and a row of spaces that wrapped; every restart added one such row, and a
+// narrower window reflowed each into a staircase (measured 2026-09-05, three panes). A restore
+// separates the two shells with a line break, recorded like output so that every replay draws the
+// join the same way.
+func TestARestoredShellStartsOnANewLineWhenTheOutputWasCutMidLine(t *testing.T) {
+	for _, tail := range []struct {
+		name      string
+		output    string
+		separated bool
+	}{
+		{"cut on a prompt", "prompt> ", true},
+		{"ended a line", "done\r\n", false},
+	} {
+		t.Run(tail.name, func(t *testing.T) {
+			// cat writes nothing on its own, so the retained output is exactly what the test wrote.
+			home := t.TempDir()
+			first := newRegistry("/bin/cat")
+			firstStore, err := newStore(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first.attachStore(firstStore)
+			request := openRequest(t)
+			request.Shell = "/bin/cat"
+			value, err := first.open(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := value.id
+			value.mu.Lock()
+			value.written = value.ring.write([]byte(tail.output))
+			through := value.written
+			value.mu.Unlock()
+			if err := firstStore.append(id, []byte(tail.output), through); err != nil {
+				t.Fatal(err)
+			}
+			first.shutdown()
+			_ = firstStore.close()
+
+			second := newRegistry("/bin/cat")
+			secondStore, err := newStore(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = secondStore.close() })
+			second.attachStore(secondStore)
+			second.restore()
+			t.Cleanup(func() { second.shutdown() })
+			back, held := second.byID(id)
+			if !held {
+				t.Fatal("the session did not restore")
+			}
+			_, _, data := back.ring.snapshot()
+			joined := string(data)
+			if len(joined) < len(tail.output) || joined[:len(tail.output)] != tail.output {
+				t.Fatalf("the ring does not begin with the retained output: %q", joined)
+			}
+			rest := joined[len(tail.output):]
+			separated := len(rest) >= 2 && rest[:2] == "\r\n"
+			if separated != tail.separated {
+				t.Fatalf("output %q: separated=%v, want %v (ring %q)", tail.output, separated, tail.separated, joined)
+			}
+			// Stored as well, so the next restart replays the same join. The shutdown drains the feed.
+			second.shutdown()
+			stored, _, err := secondStore.output(id, 1<<20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			storedRest := string(stored)[len(tail.output):]
+			if (len(storedRest) >= 2 && storedRest[:2] == "\r\n") != tail.separated {
+				t.Fatalf("the store does not hold the same join: %q", stored)
+			}
+		})
+	}
+}

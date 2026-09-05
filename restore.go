@@ -20,6 +20,9 @@ const (
 
 type restoreOutcome = controlwire.SessionOutcome
 
+// shellBoundary is what separates the output of a session's previous shell from its next one.
+var shellBoundary = []byte("\r\n")
+
 // sessionText is how a session id travels on the envelope. Decimal, and the envelope reads nothing
 // out of it.
 func sessionText(id uint64) string { return strconv.FormatUint(id, 10) }
@@ -143,6 +146,17 @@ func (reg *registry) restoreOne(held *store, id uint64) restoreOutcome {
 	value.ring.restore(output, through)
 	_, live, _ := value.ring.snapshot()
 	value.written = live
+	// The new shell writes after the output the previous one left, and that output ends where the
+	// session was cut: on a prompt, most of the time. Drawn straight on, the new shell's first prompt
+	// began on the old prompt's row, and zsh marked the join with its end-of-line mark and a row of
+	// spaces that wrapped — every restart added one wrapped row, and a narrower window reflowed each
+	// into a staircase (measured 2026-09-05). The two shells are separated by a line break, recorded
+	// like any output: replayed now and stored for the next restart, the join is drawn the same way
+	// every time. Output that already ended a line needs none.
+	if len(output) > 0 && output[len(output)-1] != '\n' {
+		value.written = value.ring.write(shellBoundary)
+		value.feed.offer(shellBoundary, value.written)
+	}
 	reg.sessions[id] = value
 	processStarted := reg.processStarted
 	reg.mu.Unlock()
