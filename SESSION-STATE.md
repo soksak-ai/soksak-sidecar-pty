@@ -39,8 +39,8 @@ classifies none. The terminal mirror owns that.
 | `writtenAt` | process | The abandon judgment's other input |
 | `resume` | process | A channel |
 | `eventSequence` | session | Observers detect gaps by it. A restore that restarted it at zero would report a gap that did not happen |
-| `cols` | session | The size applied to the pty. A restore reapplies it |
-| `rows` | session | The size applied to the pty. A restore reapplies it |
+| `cols` | session | The size applied to the pty, written to the record on every resize. A restore reapplies it |
+| `rows` | session | The size applied to the pty, written to the record on every resize. A restore reapplies it |
 | `processEnded` | process | A callback into the registry |
 | `store` | process | The open handle this session appends through. What it writes survives; the handle does not |
 | `feed` | process | The queue carrying output to the store. A queue is a place in this process, and a restart drains and rebuilds it |

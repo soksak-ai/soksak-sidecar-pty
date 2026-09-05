@@ -515,3 +515,56 @@ func TestTheAbandonSweepTakesTheRecord(t *testing.T) {
 		t.Fatal("the record outlived the session the sweep ended")
 	}
 }
+
+// SESSION-STATE.md: `cols` and `rows` are the size applied to the pty, and a restore reapplies it.
+// The record held the size the session was created with and nothing rewrote it on a resize.
+// Measured 2026-09-05 on a test instance: sixteen records, every one at 1×1, while the shells
+// they described ran at 29×30 — every restore started its shell in a one-cell terminal, the prompt
+// came out in pieces, and every restart added a layer to the picture.
+func TestARestoreReappliesTheSizeOfTheLastResize(t *testing.T) {
+	home := t.TempDir()
+	first := newRegistry("/bin/sh")
+	firstStore, err := newStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.attachStore(firstStore)
+
+	request := openRequest(t)
+	request.Cols, request.Rows = 1, 1
+	value, err := first.open(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := value.id
+	if err := value.resize(120, 40); err != nil {
+		t.Fatal(err)
+	}
+	record, err := firstStore.read(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Cols != 120 || record.Rows != 40 {
+		t.Fatalf("the record holds %dx%d after a resize to 120x40", record.Cols, record.Rows)
+	}
+	first.shutdown()
+	_ = firstStore.close()
+
+	second := newRegistry("/bin/sh")
+	secondStore, err := newStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = secondStore.close() })
+	second.attachStore(secondStore)
+	second.restore()
+	t.Cleanup(func() { second.shutdown() })
+
+	back, held := second.byID(id)
+	if !held {
+		t.Fatal("the restored session is not in the registry")
+	}
+	if back.cols != 120 || back.rows != 40 {
+		t.Fatalf("the restored session is %dx%d, not the 120x40 it was last sized to", back.cols, back.rows)
+	}
+}

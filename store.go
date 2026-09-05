@@ -314,6 +314,21 @@ func (s *store) clearStopMark(id uint64) error {
 	return s.write(record)
 }
 
+// setSize records the size applied to one session's pty. A restore reapplies it, so the record
+// has to follow every resize: one that held the creation size started every restored shell in a
+// one-cell terminal (measured 2026-09-05, sixteen records at 1×1 under shells running at 29×30).
+func (s *store) setSize(id uint64, cols, rows uint16) error {
+	lock := s.recordLock(id)
+	lock.Lock()
+	defer lock.Unlock()
+	record, err := s.read(id)
+	if err != nil {
+		return err
+	}
+	record.Cols, record.Rows = cols, rows
+	return s.write(record)
+}
+
 // setModes records the mode state for one session. Modes change when a program enters or leaves a
 // full-screen mode, which is rare, so this is written on change rather than on a cadence.
 func (s *store) setModes(id uint64, report []byte) error {

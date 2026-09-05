@@ -474,7 +474,15 @@ func (value *session) resize(cols, rows uint16) error {
 	for observer := range value.observers {
 		observer.publishResize(event)
 	}
+	held := value.store
 	value.mu.Unlock()
+	// The size is session state (SESSION-STATE.md): a restore reapplies it, so the record follows
+	// the pty. Written outside the session lock, in the record's own lock like every record write.
+	if held != nil {
+		if err := held.setSize(value.id, cols, rows); err != nil {
+			fmt.Fprintf(os.Stderr, "soksak-sidecar-pty: session %d resized and its record keeps the old size: %v\n", value.id, err)
+		}
+	}
 	return nil
 }
 
